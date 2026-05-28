@@ -35,7 +35,7 @@ export const userApi = {
   getUser: (id: string) => apiClient.get<ApiResponse<User>>(`/users/${id}`),
 
   updateUser: (id: string, data: UpdateUserDto) =>
-    apiClient.patch<ApiResponse<User>>(`/users/${id}`, data),
+    apiClient.put<ApiResponse<User>>(`/users/${id}`, data),
 
   deleteUser: (id: string) =>
     apiClient.delete<ApiResponse<{ message: string }>>(`/users/${id}`),
@@ -76,9 +76,10 @@ export const userApi = {
     apiClient.delete<ApiResponse<{ message: string }>>(`/classes/${classId}/students/${studentId}`),
 
   getSubjects: (params?: { class_id?: string; teacher_id?: string }) =>
-    params?.class_id
-      ? apiClient.get<ApiResponse<Subject[]>>(`/classes/${params.class_id}/subjects`)
-      : apiClient.get<ApiResponse<Subject[]>>('/classes'),
+    apiClient.get<ApiResponse<Subject[]>>(
+      params?.class_id ? `/classes/${params.class_id}/subjects` : '/classes/subjects/all',
+      { params: params?.teacher_id ? { teacher_id: params.teacher_id } : undefined }
+    ),
 
   getSubject: (classId: string, subjectId: string) =>
     apiClient.get<ApiResponse<Subject>>(`/classes/${classId}/subjects/${subjectId}`),

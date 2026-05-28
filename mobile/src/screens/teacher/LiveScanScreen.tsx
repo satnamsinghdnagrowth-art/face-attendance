@@ -53,6 +53,7 @@ const LiveScanScreen: React.FC = () => {
   const [timer, setTimer] = useState('00:00');
   const [manualMode, setManualMode] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
+  const [cameraFacing, setCameraFacing] = useState<'front' | 'back'>('front');
   const [scanCount, setScanCount] = useState(0);
   const [classStudents, setClassStudents] = useState<User[]>([]);
   const [markedStudents, setMarkedStudents] = useState<Record<string, AttendanceStatus>>({});
@@ -256,7 +257,7 @@ const LiveScanScreen: React.FC = () => {
       <CameraView
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
-        facing="front"
+        facing={cameraFacing}
         onCameraReady={() => setCameraReady(true)}
       />
 
@@ -271,7 +272,7 @@ const LiveScanScreen: React.FC = () => {
 
       {/* Top bar */}
       <SafeAreaView style={styles.topBar} edges={['top']}>
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+        <TouchableOpacity style={styles.topBarBtn} onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={22} color="white" />
         </TouchableOpacity>
 
@@ -283,9 +284,20 @@ const LiveScanScreen: React.FC = () => {
           <Text style={styles.sessionTimer}>{timer}</Text>
         </View>
 
-        <TouchableOpacity style={styles.endButton} onPress={handleEndSession}>
-          <Text style={styles.endButtonText}>End</Text>
-        </TouchableOpacity>
+        <View style={styles.topBarRight}>
+          <TouchableOpacity
+            style={styles.topBarBtn}
+            onPress={() => {
+              setCameraReady(false);
+              setCameraFacing((f) => (f === 'front' ? 'back' : 'front'));
+            }}
+          >
+            <Ionicons name="camera-reverse-outline" size={22} color="white" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.endButton} onPress={handleEndSession}>
+            <Text style={styles.endButtonText}>End</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
 
       {/* Stats overlay */}
@@ -448,7 +460,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     zIndex: 30,
   },
-  backButton: {
+  topBarRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  topBarBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,

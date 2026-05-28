@@ -64,7 +64,10 @@ export const attendanceApi = {
     apiClient.get<ApiResponse<AttendanceRecord[]>>('/attendance/my-history', { params }),
 
   getClassAttendance: (params: GetClassAttendanceParams) =>
-    apiClient.get<ApiResponse<ClassAttendanceStats>>('/attendance/class', { params }),
+    apiClient.get<ApiResponse<ClassAttendanceStats>>(
+      `/attendance/class/${params.class_id}`,
+      { params: { date: params.date, subject_id: params.subject_id, session_id: params.session_id } }
+    ),
 
   getSessionRecords: (sessionId: string) =>
     apiClient.get<ApiResponse<AttendanceRecord[]>>(`/attendance/sessions/${sessionId}/records`),

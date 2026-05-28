@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { body, param, query as queryValidator } from 'express-validator';
 import { AuthRequest, AttendanceStatus, GPSLocation } from '../types';
+import { query as dbQuery } from '../config/database';
 import { attendanceService } from '../services/attendance.service';
 import { faceService } from '../services/face.service';
 import { notificationService } from '../services/notification.service';
@@ -468,6 +469,208 @@ export const getStudentSummary = async (
     });
 
     successResponse(res, summary, 'Attendance summary retrieved');
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── GET /attendance/trend ────────────────────────────────────────────────────
+export const getAttendanceTrend = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { from, to, class_id, subject_id, student_id } = req.query as Record<string, string>;
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const fromDate = from || thirtyDaysAgo.toISOString().split('T')[0]!;
+
+    const params: unknown[] = [fromDate];
+    const conditions = ['ar.date >= $1'];
+
+    if (to) { params.push(to); conditions.push(`ar.date <= $${params.length}`); }
+    if (class_id) { params.push(class_id); conditions.push(`ar.class_id = $${params.length}::uuid`); }
+    if (subject_id) { params.push(subject_id); conditions.push(`ar.subject_id = $${params.length}::uuid`); }
+    if (student_id) { params.push(student_id); conditions.push(`ar.student_id = $${params.length}::uuid`); }
+
+    const result = await dbQuery<{
+      date: string;
+      total: string;
+      present: string;
+      percentage: string;
+    }>(
+      `SELECT
+         ar.date::text                                                           AS date,
+         COUNT(*)::int                                                           AS total,
+         COUNT(*) FILTER (WHERE ar.status IN ('present','late','manual_override'))::int AS present,
+         COALESCE(ROUND(
+           COUNT(*) FILTER (WHERE ar.status IN ('present','late','manual_override'))
+           * 100.0 / NULLIF(COUNT(*), 0), 2
+         ), 0)::float                                                            AS percentage
+       FROM attendance_records ar
+       WHERE ${conditions.join(' AND ')}
+       GROUP BY ar.date
+       ORDER BY ar.date ASC`,
+      params
+    );
+
+    const rows = result.rows.map((r) => ({
+      date: r.date,
+      total: Number(r.total),
+      present: Number(r.present),
+      percentage: Number(r.percentage),
+    }));
+
+    successResponse(res, rows, 'Attendance trend retrieved');
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── GET /attendance/defaulters ───────────────────────────────────────────────
+export const getAttendanceDefaulters = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { threshold = '75', class_id } = req.query as Record<string, string>;
+    const thresholdNum = Math.min(100, Math.max(0, parseFloat(threshold) || 75));
+
+    const params: unknown[] = [thresholdNum];
+    const joinConditions: string[] = [];
+    const whereExtras: string[] = [];
+
+    if (class_id) {
+      params.push(class_id);
+      joinConditions.push(`AND ar.class_id = $${params.length}::uuid`);
+    }
+
+    const result = await dbQuery<{
+      id: string;
+      name: string;
+      email: string;
+      photo_url: string | null;
+      total_sessions: string;
+      attended_sessions: string;
+      percentage: string;
+    }>(
+      `SELECT
+         u.id,
+         u.name,
+         u.email,
+         u.photo_url,
+         COUNT(DISTINCT ar.session_id)::int                                         AS total_sessions,
+         COUNT(DISTINCT ar.session_id)
+           FILTER (WHERE ar.status IN ('present','late','manual_override'))::int    AS attended_sessions,
+         COALESCE(ROUND(
+           COUNT(DISTINCT ar.session_id)
+             FILTER (WHERE ar.status IN ('present','late','manual_override'))
+             * 100.0 / NULLIF(COUNT(DISTINCT ar.session_id), 0), 2
+         ), 0)::float                                                               AS percentage
+       FROM users u
+       JOIN attendance_records ar ON ar.student_id = u.id ${joinConditions.join(' ')}
+       WHERE u.role = 'student' AND u.is_active = true
+       GROUP BY u.id, u.name, u.email, u.photo_url
+       HAVING COALESCE(ROUND(
+         COUNT(DISTINCT ar.session_id)
+           FILTER (WHERE ar.status IN ('present','late','manual_override'))
+           * 100.0 / NULLIF(COUNT(DISTINCT ar.session_id), 0), 2
+       ), 0) < $1
+       ORDER BY percentage ASC`,
+      params
+    );
+
+    const defaulters = result.rows.map((r) => ({
+      student: { id: r.id, name: r.name, email: r.email, photo_url: r.photo_url },
+      total_sessions: Number(r.total_sessions),
+      attended_sessions: Number(r.attended_sessions),
+      percentage: Number(r.percentage),
+    }));
+
+    successResponse(res, defaulters, 'Defaulters list retrieved');
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── GET /attendance/export ───────────────────────────────────────────────────
+export const exportAttendanceReport = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (!req.user) throw new UnauthorizedError();
+
+    const { from, to, class_id, subject_id, format = 'csv' } = req.query as Record<string, string>;
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const fromDate = from || thirtyDaysAgo.toISOString().split('T')[0]!;
+
+    const params: unknown[] = [fromDate];
+    const conditions = ['ar.date >= $1'];
+
+    if (to) { params.push(to); conditions.push(`ar.date <= $${params.length}`); }
+    if (class_id) { params.push(class_id); conditions.push(`ar.class_id = $${params.length}::uuid`); }
+    if (subject_id) { params.push(subject_id); conditions.push(`ar.subject_id = $${params.length}::uuid`); }
+
+    const result = await dbQuery<{
+      student_name: string;
+      class_name: string;
+      subject_name: string;
+      date: string;
+      status: string;
+      confidence_score: string | null;
+      marked_at: string;
+    }>(
+      `SELECT
+         u.name                AS student_name,
+         COALESCE(c.name, '')  AS class_name,
+         COALESCE(s.name, '')  AS subject_name,
+         ar.date::text         AS date,
+         ar.status,
+         ROUND(ar.confidence_score::numeric, 3)::text AS confidence_score,
+         ar.marked_at::text    AS marked_at
+       FROM attendance_records ar
+       JOIN users u ON u.id = ar.student_id
+       LEFT JOIN classes c ON c.id = ar.class_id
+       LEFT JOIN subjects s ON s.id = ar.subject_id
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY ar.date DESC, u.name ASC
+       LIMIT 10000`,
+      params
+    );
+
+    if (result.rows.length === 0) {
+      errorResponse(res, 'No attendance data found for the selected filters', 404);
+      return;
+    }
+
+    const headers = ['Student Name', 'Class', 'Subject', 'Date', 'Status', 'Confidence', 'Marked At'];
+    const csvRows = result.rows.map((r) =>
+      [
+        r.student_name,
+        r.class_name,
+        r.subject_name,
+        r.date,
+        r.status,
+        r.confidence_score ?? '',
+        r.marked_at,
+      ]
+        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+        .join(',')
+    );
+
+    const csvContent = [headers.map((h) => `"${h}"`).join(','), ...csvRows].join('\n');
+    const filename = `attendance_export_${fromDate}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.status(200).send(csvContent);
   } catch (error) {
     next(error);
   }

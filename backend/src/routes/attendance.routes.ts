@@ -5,9 +5,10 @@ import {
   getClassAttendance, updateAttendance, getStudentSummary,
   startSessionValidators, markAttendanceValidators,
   scanAttendanceValidators, updateAttendanceValidators,
+  getAttendanceTrend, getAttendanceDefaulters, exportAttendanceReport,
 } from '../controllers/attendance.controller';
 import { authenticateToken } from '../middleware/auth.middleware';
-import { requireTeacher, requireAdmin } from '../middleware/role.middleware';
+import { requireTeacher } from '../middleware/role.middleware';
 import { uploadAttendanceImage, handleMulterError } from '../middleware/upload.middleware';
 import { validate } from '../middleware/validate.middleware';
 
@@ -16,15 +17,20 @@ const router = Router();
 // All attendance routes require authentication
 router.use(authenticateToken);
 
-// Session management (teachers & admins)
+// ─── Analytics (must come before /:id to avoid param conflicts) ───────────────
+router.get('/trend', getAttendanceTrend);
+router.get('/defaulters', getAttendanceDefaulters);
+router.get('/export', exportAttendanceReport);
+
+// ─── Session management ───────────────────────────────────────────────────────
 router.post('/sessions/start', requireTeacher, startSessionValidators, validate, startSession);
 router.post('/sessions/:id/end', requireTeacher, endSession);
-router.get('/sessions', getTeacherSessions);
 router.get('/sessions/active', getActiveSessions);
+router.get('/sessions', getTeacherSessions);
 router.get('/sessions/:id', getSession);
 
-// Mark attendance (teacher or admin) — /mark and /manual-mark are the same handler
-const markAttendanceMiddleware = [
+// ─── Mark attendance (teacher) ────────────────────────────────────────────────
+const markMiddleware = [
   requireTeacher,
   uploadAttendanceImage.single('image'),
   handleMulterError,
@@ -32,10 +38,10 @@ const markAttendanceMiddleware = [
   validate,
   markAttendance,
 ];
-router.post('/mark', ...markAttendanceMiddleware);
-router.post('/manual-mark', ...markAttendanceMiddleware);
+router.post('/mark', ...markMiddleware);
+router.post('/manual-mark', ...markMiddleware);
 
-// Face scan & auto-identify student
+// ─── Face scan & auto-identify ────────────────────────────────────────────────
 router.post(
   '/scan',
   requireTeacher,
@@ -46,16 +52,17 @@ router.post(
   scanAttendance
 );
 
-// View attendance history (students see own, teachers/admins see any)
+// ─── History (my-history is an alias for student-facing history) ──────────────
+router.get('/my-history', getAttendanceHistory);
 router.get('/history', getAttendanceHistory);
 
-// Class-level attendance report
+// ─── Class-level report ───────────────────────────────────────────────────────
 router.get('/class/:classId', requireTeacher, getClassAttendance);
 
-// Manual override
-router.put('/:id', requireTeacher, updateAttendanceValidators, validate, updateAttendance);
-
-// Student summary
+// ─── Student summary ──────────────────────────────────────────────────────────
 router.get('/summary/:studentId', getStudentSummary);
+
+// ─── Manual override (must come after named routes) ───────────────────────────
+router.put('/:id', requireTeacher, updateAttendanceValidators, validate, updateAttendance);
 
 export default router;

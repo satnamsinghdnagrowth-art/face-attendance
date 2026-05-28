@@ -5,11 +5,14 @@ import {
   StyleSheet,
   ScrollView,
   RefreshControl,
+  TouchableOpacity,
   Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useNavigation } from '@react-navigation/native';
 
 import { useAuth } from '@/hooks/useAuth';
 import { AttendanceChart } from '@/components/charts/AttendanceChart';
@@ -22,79 +25,106 @@ import { getGreeting, formatPercentage } from '@/utils/helpers';
 
 const { width } = Dimensions.get('window');
 
-interface MetricCard { label: string; value: string | number; icon: string; color: string; change?: string; }
+interface MetricCard {
+  label: string;
+  value: string | number;
+  icon: keyof typeof import('@expo/vector-icons').Ionicons.glyphMap;
+  color: string;
+  bg: string;
+}
 
 const AdminDashboardScreen: React.FC = () => {
   const { user } = useAuth();
+  const navigation = useNavigation();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [trendData, setTrendData] = useState<{ label: string; value: number }[]>([]);
-  const [departmentData, setDepartmentData] = useState<{ label: string; value: number }[]>([]);
-  const [recentActivity, setRecentActivity] = useState<unknown[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [trendLoading, setTrendLoading] = useState(true);
+  const [statsError, setStatsError] = useState(false);
+  const [trendError, setTrendError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadDashboard = useCallback(async () => {
+  const from30Days = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString().split('T')[0];
+  })();
+
+  // Independent loaders — one failure doesn't block others
+  const loadStats = useCallback(async () => {
+    setStatsError(false);
+    setStatsLoading(true);
     try {
-      const [statsRes, trendRes, activityRes] = await Promise.all([
-        userApi.getDashboardStats(),
-        attendanceApi.getAttendanceTrend({
-          from: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split('T')[0]; })(),
-        }),
-        userApi.getRecentActivity(10),
-      ]);
+      const res = await userApi.getDashboardStats();
+      setStats(res.data.data);
+    } catch {
+      setStatsError(true);
+    } finally {
+      setStatsLoading(false);
+    }
+  }, []);
 
-      setStats(statsRes.data.data);
-
-      const trend = trendRes.data.data;
+  const loadTrend = useCallback(async () => {
+    setTrendError(false);
+    setTrendLoading(true);
+    try {
+      const res = await attendanceApi.getAttendanceTrend({ from: from30Days });
+      const trend = res.data.data;
       setTrendData(
         trend.map((d) => ({
           label: new Date(d.date).toLocaleDateString('en', { month: 'short', day: 'numeric' }),
           value: d.percentage,
         }))
       );
-
-      setRecentActivity(activityRes.data.data);
-    } catch (error) {
-      console.error('Failed to load admin dashboard:', error);
+    } catch {
+      setTrendError(true);
     } finally {
-      setIsLoading(false);
+      setTrendLoading(false);
     }
-  }, []);
+  }, [from30Days]);
 
   useEffect(() => {
-    loadDashboard();
-  }, [loadDashboard]);
+    loadStats();
+    loadTrend();
+  }, [loadStats, loadTrend]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadDashboard();
+    await Promise.allSettled([loadStats(), loadTrend()]);
     setRefreshing(false);
-  }, [loadDashboard]);
+  }, [loadStats, loadTrend]);
+
+  const attendanceRate = stats?.today_attendance_rate ?? 0;
+  const presentToday = Math.round((attendanceRate / 100) * (stats?.total_students ?? 0));
 
   const metrics: MetricCard[] = [
     {
       label: 'Total Students',
-      value: stats?.total_students || 0,
+      value: stats?.total_students ?? 0,
       icon: 'people-outline',
       color: Colors.primary,
+      bg: Colors.primaryFaded,
     },
     {
       label: 'Teachers',
-      value: stats?.total_teachers || 0,
-      icon: 'person-outline',
+      value: stats?.total_teachers ?? 0,
+      icon: 'school-outline',
       color: Colors.secondary,
+      bg: Colors.secondaryFaded,
     },
     {
-      label: 'Today\'s Rate',
-      value: `${Math.round(stats?.today_attendance_rate || 0)}%`,
+      label: "Today's Rate",
+      value: statsLoading ? '...' : `${Math.round(attendanceRate)}%`,
       icon: 'checkmark-circle-outline',
-      color: Colors.success,
+      color: attendanceRate >= 75 ? Colors.success : Colors.danger,
+      bg: attendanceRate >= 75 ? Colors.successFaded : Colors.dangerFaded,
     },
     {
       label: 'Active Sessions',
-      value: stats?.active_sessions || 0,
+      value: stats?.active_sessions ?? 0,
       icon: 'play-circle-outline',
       color: Colors.warning,
+      bg: Colors.warningFaded,
     },
   ];
 
@@ -102,6 +132,7 @@ const AdminDashboardScreen: React.FC = () => {
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: Spacing.xl }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.success} />
         }
@@ -114,113 +145,146 @@ const AdminDashboardScreen: React.FC = () => {
           style={styles.header}
         >
           <View style={styles.headerRow}>
-            <View>
+            <View style={{ flex: 1, marginRight: Spacing.md }}>
               <Text style={styles.greeting}>{getGreeting()},</Text>
               <Text style={styles.adminName} numberOfLines={1}>{user?.name || 'Admin'}</Text>
-              <Text style={styles.adminRole}>System Administrator</Text>
+              <View style={styles.rolePill}>
+                <Ionicons name="shield-checkmark-outline" size={12} color="rgba(255,255,255,0.9)" />
+                <Text style={styles.roleText}>System Administrator</Text>
+              </View>
             </View>
-            <Avatar name={user?.name || 'A'} photoUrl={user?.photo_url} size={52} />
+            <Avatar name={user?.name || 'A'} photoUrl={user?.photo_url} size={54} />
           </View>
         </LinearGradient>
 
         <View style={styles.content}>
-          {/* Key metrics grid */}
+          {/* Metric cards */}
           <View style={styles.metricsGrid}>
-            {metrics.map(({ label, value, icon, color }) => (
+            {metrics.map(({ label, value, icon, color, bg }) => (
               <View key={label} style={[styles.metricCard, { borderTopColor: color }]}>
-                <View style={[styles.metricIconWrapper, { backgroundColor: color + '15' }]}>
-                  <Ionicons name={icon as never} size={22} color={color} />
+                <View style={[styles.metricIconWrapper, { backgroundColor: bg }]}>
+                  {statsLoading ? (
+                    <ActivityIndicator size="small" color={color} />
+                  ) : (
+                    <Ionicons name={icon} size={22} color={color} />
+                  )}
                 </View>
-                <Text style={[styles.metricValue, { color }]}>{value}</Text>
+                <Text style={[styles.metricValue, { color }]}>
+                  {statsLoading ? '–' : String(value)}
+                </Text>
                 <Text style={styles.metricLabel}>{label}</Text>
               </View>
             ))}
           </View>
 
+          {statsError && (
+            <TouchableOpacity style={styles.errorBanner} onPress={loadStats}>
+              <Ionicons name="cloud-offline-outline" size={16} color={Colors.danger} />
+              <Text style={styles.errorText}>Stats unavailable · Tap to retry</Text>
+            </TouchableOpacity>
+          )}
+
           {/* Attendance trend chart */}
           <View style={styles.chartCard}>
-            <Text style={styles.chartTitle}>Attendance Trend</Text>
-            <Text style={styles.chartSubtitle}>Last 30 days</Text>
-            {trendData.length > 0 ? (
+            <View style={styles.chartHeaderRow}>
+              <View>
+                <Text style={styles.chartTitle}>Attendance Trend</Text>
+                <Text style={styles.chartSubtitle}>Last 30 days</Text>
+              </View>
+              {!trendLoading && !trendError && trendData.length > 0 && (
+                <View style={[
+                  styles.trendBadge,
+                  {
+                    backgroundColor:
+                      trendData.length > 0 &&
+                      trendData[trendData.length - 1]!.value >= 75
+                        ? Colors.successFaded
+                        : Colors.dangerFaded,
+                  },
+                ]}>
+                  <Text style={[
+                    styles.trendBadgeText,
+                    {
+                      color:
+                        trendData.length > 0 &&
+                        trendData[trendData.length - 1]!.value >= 75
+                          ? Colors.success
+                          : Colors.danger,
+                    },
+                  ]}>
+                    {trendData.length > 0
+                      ? `${trendData[trendData.length - 1]!.value.toFixed(1)}%`
+                      : '0%'}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {trendLoading ? (
+              <View style={styles.chartPlaceholder}>
+                <ActivityIndicator size="large" color={Colors.success} />
+                <Text style={styles.chartPlaceholderText}>Loading trend data...</Text>
+              </View>
+            ) : trendError ? (
+              <View style={styles.chartPlaceholder}>
+                <Ionicons name="bar-chart-outline" size={36} color={Colors.textMuted} />
+                <Text style={styles.chartPlaceholderText}>Unable to load chart</Text>
+                <TouchableOpacity style={styles.retryBtn} onPress={loadTrend}>
+                  <Ionicons name="refresh" size={14} color={Colors.success} />
+                  <Text style={styles.retryText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : trendData.length > 0 ? (
               <AttendanceChart data={trendData} type="line" height={180} color={Colors.success} />
             ) : (
-              <View style={styles.chartEmpty}>
-                <Text style={styles.chartEmptyText}>Loading chart data...</Text>
+              <View style={styles.chartPlaceholder}>
+                <Ionicons name="bar-chart-outline" size={36} color={Colors.textMuted} />
+                <Text style={styles.chartPlaceholderText}>No attendance data yet</Text>
               </View>
             )}
           </View>
 
-          {/* Quick alerts */}
-          <View style={styles.alertsCard}>
-            <Text style={styles.sectionTitle}>System Alerts</Text>
-            {[
-              {
-                icon: 'warning-outline',
-                color: Colors.danger,
-                bg: Colors.dangerFaded,
-                title: 'Low Attendance Alert',
-                desc: 'Some students are below 75% attendance threshold',
-              },
-              {
-                icon: 'people-outline',
-                color: Colors.warning,
-                bg: Colors.warningFaded,
-                title: 'Enrollment Pending',
-                desc: `${Math.max(0, (stats?.total_students || 0) - 10)} students haven't enrolled face data`,
-              },
-              {
-                icon: 'checkmark-circle-outline',
-                color: Colors.success,
-                bg: Colors.successFaded,
-                title: 'System Operational',
-                desc: 'All services running normally',
-              },
-            ].map(({ icon, color, bg, title, desc }) => (
-              <View key={title} style={[styles.alertItem, { backgroundColor: bg }]}>
-                <Ionicons name={icon as never} size={20} color={color} />
-                <View style={styles.alertContent}>
-                  <Text style={[styles.alertTitle, { color }]}>{title}</Text>
-                  <Text style={styles.alertDesc}>{desc}</Text>
-                </View>
-              </View>
-            ))}
-          </View>
-
-          {/* Today overview */}
+          {/* Today's overview */}
           <View style={styles.overviewCard}>
             <Text style={styles.sectionTitle}>Today's Overview</Text>
+
             <View style={styles.overviewRow}>
-              <View style={styles.overviewItem}>
-                <Ionicons name="people" size={28} color={Colors.primary} />
-                <Text style={styles.overviewValue}>{stats?.total_students || 0}</Text>
-                <Text style={styles.overviewLabel}>Total Students</Text>
-              </View>
-              <View style={styles.overviewDivider} />
-              <View style={styles.overviewItem}>
-                <Ionicons name="checkmark-circle" size={28} color={Colors.success} />
-                <Text style={styles.overviewValue}>
-                  {Math.round(((stats?.today_attendance_rate || 0) / 100) * (stats?.total_students || 0))}
-                </Text>
-                <Text style={styles.overviewLabel}>Present Today</Text>
-              </View>
-              <View style={styles.overviewDivider} />
-              <View style={styles.overviewItem}>
-                <Ionicons name="play-circle" size={28} color={Colors.warning} />
-                <Text style={styles.overviewValue}>{stats?.active_sessions || 0}</Text>
-                <Text style={styles.overviewLabel}>Active Sessions</Text>
-              </View>
+              {[
+                {
+                  icon: 'people' as const,
+                  color: Colors.primary,
+                  value: statsLoading ? '–' : String(stats?.total_students ?? 0),
+                  label: 'Total Students',
+                },
+                {
+                  icon: 'checkmark-circle' as const,
+                  color: Colors.success,
+                  value: statsLoading ? '–' : String(presentToday),
+                  label: 'Present Today',
+                },
+                {
+                  icon: 'play-circle' as const,
+                  color: Colors.warning,
+                  value: statsLoading ? '–' : String(stats?.active_sessions ?? 0),
+                  label: 'Active Sessions',
+                },
+              ].map(({ icon, color, value, label }, i, arr) => (
+                <React.Fragment key={label}>
+                  <View style={styles.overviewItem}>
+                    <Ionicons name={icon} size={26} color={color} />
+                    <Text style={[styles.overviewValue, { color }]}>{value}</Text>
+                    <Text style={styles.overviewLabel}>{label}</Text>
+                  </View>
+                  {i < arr.length - 1 && <View style={styles.overviewDivider} />}
+                </React.Fragment>
+              ))}
             </View>
 
             <View style={styles.rateContainer}>
-              <View style={styles.rateHeader}>
+              <View style={styles.rateHeaderRow}>
                 <Text style={styles.rateLabel}>Today's Attendance Rate</Text>
-                <Text
-                  style={[
-                    styles.rateValue,
-                    { color: (stats?.today_attendance_rate || 0) >= 75 ? Colors.success : Colors.danger },
-                  ]}
-                >
-                  {formatPercentage(stats?.today_attendance_rate || 0)}
+                <Text style={[styles.rateValue, { color: attendanceRate >= 75 ? Colors.success : Colors.danger }]}>
+                  {statsLoading ? '...' : formatPercentage(attendanceRate)}
                 </Text>
               </View>
               <View style={styles.rateTrack}>
@@ -228,13 +292,37 @@ const AdminDashboardScreen: React.FC = () => {
                   style={[
                     styles.rateFill,
                     {
-                      width: `${Math.min(stats?.today_attendance_rate || 0, 100)}%`,
-                      backgroundColor:
-                        (stats?.today_attendance_rate || 0) >= 75 ? Colors.success : Colors.danger,
+                      width: `${Math.min(attendanceRate, 100)}%` as `${number}%`,
+                      backgroundColor: attendanceRate >= 75 ? Colors.success : Colors.danger,
                     },
                   ]}
                 />
               </View>
+            </View>
+          </View>
+
+          {/* Quick navigation */}
+          <View style={styles.quickNavCard}>
+            <Text style={styles.sectionTitle}>Quick Access</Text>
+            <View style={styles.quickNavGrid}>
+              {[
+                { icon: 'people-outline' as const, label: 'Students', tab: 'Students', color: Colors.primary },
+                { icon: 'school-outline' as const, label: 'Teachers', tab: 'Teachers', color: Colors.secondary },
+                { icon: 'document-text-outline' as const, label: 'Reports', tab: 'Reports', color: Colors.success },
+                { icon: 'settings-outline' as const, label: 'Settings', tab: 'Settings', color: Colors.warning },
+              ].map(({ icon, label, tab, color }) => (
+                <TouchableOpacity
+                  key={label}
+                  style={[styles.quickNavItem, { borderColor: color + '40' }]}
+                  onPress={() => navigation.navigate(tab as never)}
+                  activeOpacity={0.75}
+                >
+                  <View style={[styles.quickNavIcon, { backgroundColor: color + '15' }]}>
+                    <Ionicons name={icon} size={22} color={color} />
+                  </View>
+                  <Text style={[styles.quickNavLabel, { color }]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
           </View>
         </View>
@@ -245,25 +333,39 @@ const AdminDashboardScreen: React.FC = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+
+  // Header
   header: {
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
-    paddingBottom: Spacing.xl + 10,
+    paddingBottom: Spacing.xl + 12,
   },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  greeting: { fontSize: FontSizes.md, color: 'rgba(255,255,255,0.8)' },
+  headerRow: { flexDirection: 'row', alignItems: 'center' },
+  greeting: { fontSize: FontSizes.sm, color: 'rgba(255,255,255,0.8)' },
   adminName: {
     fontSize: FontSizes.xxl,
     fontWeight: FontWeights.bold,
     color: 'white',
+    marginTop: 2,
     maxWidth: width * 0.6,
   },
-  adminRole: { fontSize: FontSizes.sm, color: 'rgba(255,255,255,0.75)', marginTop: 2 },
+  rolePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.full,
+  },
+  roleText: { fontSize: FontSizes.xs, color: 'rgba(255,255,255,0.9)' },
+
+  // Content
   content: { padding: Spacing.md, marginTop: -20 },
+
+  // Metric cards
   metricsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -286,11 +388,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: Spacing.sm,
   },
-  metricValue: {
-    fontSize: FontSizes.xxl,
-    fontWeight: FontWeights.extrabold,
+  metricValue: { fontSize: FontSizes.xxl, fontWeight: FontWeights.extrabold },
+  metricLabel: { fontSize: FontSizes.xs, color: Colors.textSecondary, marginTop: 4 },
+
+  // Error banner
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    backgroundColor: Colors.dangerFaded,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.sm + 4,
+    marginBottom: Spacing.md,
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.danger,
   },
-  metricLabel: { fontSize: FontSizes.sm, color: Colors.textSecondary, marginTop: 4 },
+  errorText: { fontSize: FontSizes.xs, color: Colors.danger, flex: 1 },
+
+  // Chart
   chartCard: {
     backgroundColor: Colors.surface,
     borderRadius: BorderRadius.xl,
@@ -298,40 +413,49 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
     ...Shadow.md,
   },
+  chartHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.md,
+  },
   chartTitle: { fontSize: FontSizes.lg, fontWeight: FontWeights.bold, color: Colors.textPrimary },
-  chartSubtitle: { fontSize: FontSizes.sm, color: Colors.textSecondary, marginBottom: Spacing.md },
-  chartEmpty: {
+  chartSubtitle: { fontSize: FontSizes.xs, color: Colors.textSecondary, marginTop: 2 },
+  trendBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: BorderRadius.full,
+  },
+  trendBadgeText: { fontSize: FontSizes.xs, fontWeight: FontWeights.bold },
+  chartPlaceholder: {
     height: 150,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.surfaceVariant,
     borderRadius: BorderRadius.md,
-  },
-  chartEmptyText: { color: Colors.textMuted, fontSize: FontSizes.sm },
-  alertsCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.xl,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-    ...Shadow.sm,
     gap: Spacing.sm,
   },
+  chartPlaceholderText: { color: Colors.textMuted, fontSize: FontSizes.sm },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.successFaded,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.full,
+  },
+  retryText: { fontSize: FontSizes.xs, color: Colors.success, fontWeight: FontWeights.semibold },
+
+  // Section title
   sectionTitle: {
     fontSize: FontSizes.lg,
     fontWeight: FontWeights.bold,
     color: Colors.textPrimary,
-    marginBottom: Spacing.sm,
+    marginBottom: Spacing.md,
   },
-  alertItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    padding: Spacing.md,
-    borderRadius: BorderRadius.md,
-    gap: Spacing.md,
-  },
-  alertContent: { flex: 1 },
-  alertTitle: { fontSize: FontSizes.sm, fontWeight: FontWeights.semibold },
-  alertDesc: { fontSize: FontSizes.xs, color: Colors.textSecondary, marginTop: 2 },
+
+  // Overview card
   overviewCard: {
     backgroundColor: Colors.surface,
     borderRadius: BorderRadius.xl,
@@ -348,14 +472,41 @@ const styles = StyleSheet.create({
   },
   overviewItem: { flex: 1, alignItems: 'center', gap: 4 },
   overviewDivider: { width: 1, backgroundColor: Colors.border },
-  overviewValue: { fontSize: FontSizes.xl, fontWeight: FontWeights.bold, color: Colors.textPrimary },
+  overviewValue: { fontSize: FontSizes.xl, fontWeight: FontWeights.bold },
   overviewLabel: { fontSize: FontSizes.xs, color: Colors.textSecondary, textAlign: 'center' },
   rateContainer: { gap: Spacing.sm },
-  rateHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  rateHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rateLabel: { fontSize: FontSizes.sm, color: Colors.textSecondary },
   rateValue: { fontSize: FontSizes.lg, fontWeight: FontWeights.bold },
   rateTrack: { height: 8, backgroundColor: Colors.border, borderRadius: 4, overflow: 'hidden' },
   rateFill: { height: '100%', borderRadius: 4 },
+
+  // Quick navigation
+  quickNavCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    ...Shadow.sm,
+  },
+  quickNavGrid: { flexDirection: 'row', gap: Spacing.sm },
+  quickNavItem: {
+    flex: 1,
+    alignItems: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    backgroundColor: Colors.surface,
+  },
+  quickNavIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickNavLabel: { fontSize: FontSizes.xs, fontWeight: FontWeights.semibold },
 });
 
 export default AdminDashboardScreen;

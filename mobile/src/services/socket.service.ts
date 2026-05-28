@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import { AttendanceSession, ScanResult } from '@/types';
 
 const SOCKET_URL = 'https://face-attendance-9kza.onrender.com';
-
+// const SOCKET_URL = 'http://localhost:3030';
 class SocketService {
   private socket: Socket | null = null;
   private reconnectAttempts = 0;
