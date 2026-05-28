@@ -24,8 +24,8 @@ const createRedisClient = (): Redis => {
     },
     lazyConnect: false,
     keepAlive: 30000,
-    connectTimeout: 15000,
-    commandTimeout: 10000,
+    connectTimeout: 10000,
+    commandTimeout: 3000,
     // Upstash doesn't support the ready check ping — disable it
     enableReadyCheck: false,
     enableOfflineQueue: true,

@@ -22,11 +22,17 @@ export const authenticateToken = async (
   }
 
   try {
-    // Check if token is blacklisted
-    const isBlacklisted = await redisClient.get(`blacklist:${token}`);
-    if (isBlacklisted) {
-      unauthorizedResponse(res, 'Token has been revoked');
-      return;
+    // Check if token is blacklisted (non-fatal — skip if Redis is unavailable)
+    try {
+      const isBlacklisted = await redisClient.get(`blacklist:${token}`);
+      if (isBlacklisted) {
+        unauthorizedResponse(res, 'Token has been revoked');
+        return;
+      }
+    } catch (redisErr) {
+      logger.warn('Redis blacklist check failed, skipping', {
+        error: redisErr instanceof Error ? redisErr.message : String(redisErr),
+      });
     }
 
     const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET) as JWTPayload;
@@ -68,7 +74,12 @@ export const optionalAuthenticateToken = async (
   }
 
   try {
-    const isBlacklisted = await redisClient.get(`blacklist:${token}`);
+    let isBlacklisted = false;
+    try {
+      isBlacklisted = !!(await redisClient.get(`blacklist:${token}`));
+    } catch {
+      // Redis unavailable — treat token as not blacklisted
+    }
     if (!isBlacklisted) {
       const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET) as JWTPayload;
       req.user = decoded;
@@ -101,5 +112,11 @@ export const verifyRefreshToken = (token: string): { userId: string } => {
 };
 
 export const blacklistToken = async (token: string, expiresIn: number): Promise<void> => {
-  await redisClient.setex(`blacklist:${token}`, expiresIn, '1');
+  try {
+    await redisClient.setex(`blacklist:${token}`, expiresIn, '1');
+  } catch (err) {
+    logger.warn('Redis token blacklist failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 };

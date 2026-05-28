@@ -79,12 +79,12 @@ export class AuthService {
       [user.id, tokenHash]
     );
 
-    // Cache user session in Redis
-    await redisClient.setex(
+    // Cache user session in Redis (non-fatal — DB is source of truth)
+    redisClient.setex(
       `session:${user.id}`,
       REFRESH_TOKEN_TTL,
       JSON.stringify({ userId: user.id, role: user.role, email: user.email })
-    );
+    ).catch((err: Error) => logger.warn('Redis session cache failed', { error: err.message }));
 
     logger.info('User logged in', { userId: user.id, email: user.email });
 
@@ -194,8 +194,9 @@ export class AuthService {
       await query('DELETE FROM refresh_tokens WHERE user_id = $1', [userId]);
     }
 
-    // Remove session from Redis
-    await redisClient.del(`session:${userId}`);
+    // Remove session from Redis (non-fatal)
+    redisClient.del(`session:${userId}`)
+      .catch((err: Error) => logger.warn('Redis session delete failed', { error: err.message }));
 
     // Blacklist access token if provided
     if (accessToken) {
@@ -210,7 +211,8 @@ export class AuthService {
       'DELETE FROM refresh_tokens WHERE user_id = $1',
       [userId]
     );
-    await redisClient.del(`session:${userId}`);
+    redisClient.del(`session:${userId}`)
+      .catch((err: Error) => logger.warn('Redis session delete failed', { error: err.message }));
     logger.info('User logged out from all devices', { userId });
   }
 
@@ -265,8 +267,9 @@ export class AuthService {
       );
     });
 
-    // Remove session cache
-    await redisClient.del(`session:${userId}`);
+    // Remove session cache (non-fatal)
+    redisClient.del(`session:${userId}`)
+      .catch((err: Error) => logger.warn('Redis session delete failed', { error: err.message }));
 
     logger.info('Password reset successful', { userId });
   }
@@ -274,9 +277,10 @@ export class AuthService {
   async generateOTP(userId: string, type: string = 'password_reset'): Promise<string> {
     const otp = generateSecureOTP(6);
 
-    // Store OTP in Redis with TTL
+    // Store OTP in Redis with TTL (non-fatal — DB is fallback)
     const redisKey = `otp:${userId}:${type}`;
-    await redisClient.setex(redisKey, OTP_TTL, otp);
+    redisClient.setex(redisKey, OTP_TTL, otp)
+      .catch((err: Error) => logger.warn('Redis OTP cache failed', { error: err.message }));
 
     // Also store in DB for audit trail
     await query(
@@ -289,13 +293,16 @@ export class AuthService {
   }
 
   async verifyOTP(userId: string, otp: string, type: string = 'password_reset'): Promise<boolean> {
-    // Check Redis first (fast path)
+    // Check Redis first (fast path, falls through to DB on failure)
     const redisKey = `otp:${userId}:${type}`;
-    const storedOTP = await redisClient.get(redisKey);
-
-    if (storedOTP && storedOTP === otp) {
-      await redisClient.del(redisKey);
-      return true;
+    try {
+      const storedOTP = await redisClient.get(redisKey);
+      if (storedOTP && storedOTP === otp) {
+        redisClient.del(redisKey).catch(() => {});
+        return true;
+      }
+    } catch {
+      logger.warn('Redis OTP check failed, falling back to DB');
     }
 
     // Fallback to DB check
