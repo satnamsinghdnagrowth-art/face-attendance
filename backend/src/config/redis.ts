@@ -3,14 +3,18 @@ import env from './env';
 import logger from '../utils/logger';
 
 const createRedisClient = (): Redis => {
+  const isTLS = env.REDIS_URL.startsWith('rediss://');
+
   const client = new Redis(env.REDIS_URL, {
+    // Required for Upstash (rediss://) and other TLS Redis providers
+    tls: isTLS ? { rejectUnauthorized: false } : undefined,
     maxRetriesPerRequest: 3,
     retryStrategy(times: number): number | null {
       if (times > 10) {
         logger.error('Redis: max reconnection attempts reached');
         return null;
       }
-      const delay = Math.min(times * 100, 3000);
+      const delay = Math.min(times * 200, 3000);
       logger.warn(`Redis: reconnecting in ${delay}ms (attempt ${times})`);
       return delay;
     },
@@ -20,9 +24,10 @@ const createRedisClient = (): Redis => {
     },
     lazyConnect: false,
     keepAlive: 30000,
-    connectTimeout: 10000,
-    commandTimeout: 5000,
-    enableReadyCheck: true,
+    connectTimeout: 15000,
+    commandTimeout: 10000,
+    // Upstash doesn't support the ready check ping — disable it
+    enableReadyCheck: false,
     enableOfflineQueue: true,
   });
 
