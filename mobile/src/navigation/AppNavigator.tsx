@@ -6,6 +6,8 @@ import { AuthNavigator } from './AuthNavigator';
 import { StudentNavigator } from './StudentNavigator';
 import { TeacherNavigator } from './TeacherNavigator';
 import { AdminNavigator } from './AdminNavigator';
+import { ExamNavigator } from './ExamNavigator';
+import { InvigilatorNavigator } from './InvigilatorNavigator';
 import SplashScreen from '@/screens/auth/SplashScreen';
 import { RootStackParamList } from './types';
 
@@ -31,6 +33,10 @@ export const AppNavigator: React.FC = () => {
         <Stack.Screen name="Student" component={StudentNavigator} />
       ) : user.role === 'teacher' ? (
         <Stack.Screen name="Teacher" component={TeacherNavigator} />
+      ) : user.role === 'chief_examiner' ? (
+        <Stack.Screen name="Exam" component={ExamNavigator} />
+      ) : user.role === 'hall_invigilator' ? (
+        <Stack.Screen name="Invigilator" component={InvigilatorNavigator} />
       ) : (
         <Stack.Screen name="Admin" component={AdminNavigator} />
       )}

@@ -66,7 +66,7 @@ const ProfileScreen: React.FC = () => {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaType.images,
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.8,
@@ -131,19 +131,25 @@ const ProfileScreen: React.FC = () => {
     );
   }, [logout]);
 
-  const roleColor = {
+  const roleColor: Record<string, string> = {
     student: Colors.primary,
     teacher: Colors.secondary,
     admin: Colors.success,
     super_admin: Colors.danger,
-  }[user?.role || 'student'];
+    chief_examiner: Colors.info,
+    hall_invigilator: Colors.warning,
+  };
+  const currentRoleColor = roleColor[user?.role || 'student'] ?? Colors.primary;
 
-  const roleLabel = {
+  const roleLabel: Record<string, string> = {
     student: 'Student',
     teacher: 'Teacher',
     admin: 'Admin',
     super_admin: 'Super Admin',
-  }[user?.role || 'student'];
+    chief_examiner: 'Chief Examiner',
+    hall_invigilator: 'Hall Invigilator',
+  };
+  const currentRoleLabel = roleLabel[user?.role || 'student'] ?? 'User';
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -159,13 +165,13 @@ const ProfileScreen: React.FC = () => {
               showEditButton
             />
             <Text style={styles.profileName}>{user?.name || 'Unknown User'}</Text>
-            <View style={[styles.roleBadge, { backgroundColor: roleColor + '18' }]}>
+            <View style={[styles.roleBadge, { backgroundColor: currentRoleColor + '18' }]}>
               <Ionicons
                 name={user?.role === 'student' ? 'school' : user?.role === 'teacher' ? 'person' : 'shield'}
                 size={14}
-                color={roleColor}
+                color={currentRoleColor}
               />
-              <Text style={[styles.roleText, { color: roleColor }]}>{roleLabel}</Text>
+              <Text style={[styles.roleText, { color: currentRoleColor }]}>{currentRoleLabel}</Text>
             </View>
             <Text style={styles.emailText}>{user?.email}</Text>
           </View>
@@ -223,7 +229,7 @@ const ProfileScreen: React.FC = () => {
                     { label: 'Full Name', value: user?.name, icon: 'person-outline' },
                     { label: 'Email', value: user?.email, icon: 'mail-outline' },
                     { label: 'Phone', value: user?.phone || 'Not set', icon: 'call-outline' },
-                    { label: 'Role', value: roleLabel, icon: 'shield-outline' },
+                    { label: 'Role', value: currentRoleLabel, icon: 'shield-outline' },
                     { label: 'Class', value: user?.class_id || 'Not assigned', icon: 'school-outline' },
                   ].map(({ label, value, icon }) => (
                     <View key={label} style={styles.infoRow}>

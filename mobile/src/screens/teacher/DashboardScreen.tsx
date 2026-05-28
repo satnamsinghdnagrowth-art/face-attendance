@@ -138,7 +138,7 @@ const TeacherDashboardScreen: React.FC = () => {
             <TouchableOpacity
               style={styles.activeSessionBanner}
               onPress={() =>
-                navigation.navigate('LiveScan' as never, { sessionId: activeSession.id } as never)
+                (navigation as any).navigate('LiveScan', { sessionId: activeSession.id })
               }
               activeOpacity={0.85}
             >
@@ -183,10 +183,7 @@ const TeacherDashboardScreen: React.FC = () => {
               <TouchableOpacity
                 style={[styles.actionCard, { backgroundColor: Colors.infoFaded }]}
                 onPress={() =>
-                  navigation.navigate(
-                    'LiveScan' as never,
-                    { sessionId: activeSession?.id || '' } as never
-                  )
+                  (navigation as any).navigate('LiveScan', { sessionId: activeSession?.id || '' })
                 }
                 activeOpacity={0.8}
               >
@@ -248,7 +245,7 @@ const TeacherDashboardScreen: React.FC = () => {
                       index === activeSessions.length - 1 && styles.sessionItemLast,
                     ]}
                     onPress={() =>
-                      navigation.navigate('LiveScan' as never, { sessionId: session.id } as never)
+                      (navigation as any).navigate('LiveScan', { sessionId: session.id })
                     }
                     activeOpacity={0.7}
                   >

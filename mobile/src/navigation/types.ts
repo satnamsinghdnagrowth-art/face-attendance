@@ -66,6 +66,8 @@ export type RootStackParamList = {
   Student: NavigatorScreenParams<StudentStackParamList>;
   Teacher: NavigatorScreenParams<TeacherStackParamList>;
   Admin: NavigatorScreenParams<AdminStackParamList>;
+  Exam: NavigatorScreenParams<ExamStackParamList>;
+  Invigilator: NavigatorScreenParams<InvigilatorStackParamList>;
 };
 
 // Screen props helpers
@@ -101,5 +103,70 @@ export type TeacherStackProps<T extends keyof TeacherStackParamList> = NativeSta
 
 export type AdminStackProps<T extends keyof AdminStackParamList> = NativeStackScreenProps<
   AdminStackParamList,
+  T
+>;
+
+// ─── Exam Monitoring Navigation ───────────────────────────────────────────────
+
+export type ExamTabParamList = {
+  ExamList: undefined;
+  ExamLive: undefined;
+  ExamAlerts: undefined;
+  ExamReview: undefined;
+};
+
+export type ExamStackParamList = {
+  ExamTabs: undefined;
+  ExamDetail: { examId: string };
+  CreateExam: undefined;
+  HallSetup: { examId: string };
+  FlaggedCases: { examId: string };
+  ComplianceReport: { examId: string };
+};
+
+export type InvigilatorTabParamList = {
+  MyHall: undefined;
+  ScanEntry: { sessionId?: string; examId?: string; hallId?: string };
+  Students: undefined;
+};
+
+export type InvigilatorStackParamList = {
+  InvigilatorTabs: undefined;
+  EntryVerification: {
+    sessionId: string;
+    examId: string;
+    hallId: string;
+    studentId?: string;
+    studentName?: string;
+    seatNumber?: string;
+    rollNumber?: string;
+  };
+  ReVerify: {
+    sessionId: string;
+    examId: string;
+    studentId: string;
+    studentName: string;
+    seatNumber?: string;
+  };
+  HallSession: { examId: string; hallId: string };
+};
+
+export type ExamTabProps<T extends keyof ExamTabParamList> = BottomTabScreenProps<
+  ExamTabParamList,
+  T
+>;
+
+export type ExamStackProps<T extends keyof ExamStackParamList> = NativeStackScreenProps<
+  ExamStackParamList,
+  T
+>;
+
+export type InvigilatorTabProps<T extends keyof InvigilatorTabParamList> = BottomTabScreenProps<
+  InvigilatorTabParamList,
+  T
+>;
+
+export type InvigilatorStackProps<T extends keyof InvigilatorStackParamList> = NativeStackScreenProps<
+  InvigilatorStackParamList,
   T
 >;

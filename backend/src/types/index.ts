@@ -1,7 +1,7 @@
 import { Request } from 'express';
 
 // ─── Enums / Union Types ──────────────────────────────────────────────────────
-export type UserRole = 'super_admin' | 'admin' | 'teacher' | 'student';
+export type UserRole = 'super_admin' | 'admin' | 'chief_examiner' | 'hall_invigilator' | 'teacher' | 'student';
 export type AttendanceStatus = 'present' | 'absent' | 'late' | 'leave' | 'manual_override';
 export type SessionStatus = 'active' | 'completed' | 'cancelled';
 export type LeaveStatus = 'pending' | 'approved' | 'rejected';
@@ -269,4 +269,42 @@ export interface SocketSessionPayload {
   teacherId: string;
   startTime?: Date;
   endTime?: Date;
+}
+
+// ─── Exam Monitoring ──────────────────────────────────────────────────────────
+export type ExamStatus = 'scheduled' | 'active' | 'completed' | 'cancelled';
+export type VerificationVerdict = 'verified' | 'flagged' | 'rejected' | 'no_match' | 'proxy_suspect';
+export type ScanType = 'entry' | 're_verify' | 'manual' | 'id_card';
+export type ReviewDecision = 'confirmed_proxy' | 'false_alarm' | 'inconclusive';
+export type AlertType = 'proxy_suspect' | 'low_confidence' | 'no_show' | 'repeated_failure' | 'id_mismatch';
+export type AlertSeverity = 'low' | 'medium' | 'high' | 'critical';
+
+export interface ExamRoles {
+  CHIEF_EXAMINER: 'chief_examiner';
+  HALL_INVIGILATOR: 'hall_invigilator';
+}
+
+// Socket payloads for exam monitoring
+export interface SocketExamAlertPayload {
+  alertId: string;
+  examId: string;
+  hallId?: string;
+  alertType: AlertType;
+  severity: AlertSeverity;
+  studentId?: string;
+  studentName?: string;
+  message: string;
+  eventId?: string;
+}
+
+export interface SocketVerificationPayload {
+  eventId: string;
+  examId: string;
+  hallId: string;
+  studentId: string;
+  studentName: string;
+  verdict: VerificationVerdict;
+  confidence: number;
+  scanType: ScanType;
+  scannedAt: Date;
 }

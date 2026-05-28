@@ -1,4 +1,4 @@
-export type UserRole = 'super_admin' | 'admin' | 'teacher' | 'student';
+export type UserRole = 'super_admin' | 'admin' | 'chief_examiner' | 'hall_invigilator' | 'teacher' | 'student';
 export type AttendanceStatus = 'present' | 'absent' | 'late' | 'leave' | 'manual_override';
 export type SessionStatus = 'active' | 'completed' | 'cancelled';
 

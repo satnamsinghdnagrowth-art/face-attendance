@@ -52,3 +52,7 @@ export const requireSelf = (userIdExtractor: (req: AuthRequest) => string) => {
 export const requireSelfOrAdmin = (userIdParam: string = 'id') => {
   return requireSelf((req) => req.params[userIdParam] || '');
 };
+
+export const requireChiefExaminer = requireRole('chief_examiner', 'admin', 'super_admin');
+export const requireInvigilator = requireRole('hall_invigilator', 'chief_examiner', 'admin', 'super_admin');
+export const requireExamStaff = requireRole('hall_invigilator', 'chief_examiner', 'teacher', 'admin', 'super_admin');

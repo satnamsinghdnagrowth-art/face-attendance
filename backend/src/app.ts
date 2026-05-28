@@ -16,6 +16,8 @@ import classRoutes from './routes/class.routes';
 import reportRoutes from './routes/report.routes';
 import notificationRoutes from './routes/notification.routes';
 import dashboardRoutes from './routes/dashboard.routes';
+import examRoutes from './routes/exam.routes';
+import verificationRoutes from './routes/verification.routes';
 
 const createApp = (): Application => {
   const app = express();
@@ -121,6 +123,8 @@ const createApp = (): Application => {
   app.use('/api/reports', reportRoutes);
   app.use('/api/notifications', notificationRoutes);
   app.use('/api/dashboard', dashboardRoutes);
+  app.use('/api/v2/exams', examRoutes);
+  app.use('/api/v2/verify', verificationRoutes);
 
   // ─── 404 Handler ─────────────────────────────────────────────────────────
   app.use(notFoundHandler);

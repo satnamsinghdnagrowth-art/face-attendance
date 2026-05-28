@@ -104,7 +104,7 @@ const ReportsScreen: React.FC = () => {
 
       const downloadUrl = `${API_BASE_URL}/attendance/export?${params.toString()}`;
       const filename = `attendance_${format}_${Date.now()}.${format}`;
-      const fileUri = `${FileSystem.cacheDirectory}${filename}`;
+      const fileUri = `${(FileSystem as unknown as { cacheDirectory: string }).cacheDirectory ?? ''}${filename}`;
 
       const result = await FileSystem.downloadAsync(downloadUrl, fileUri, {
         headers: { Authorization: `Bearer ${token ?? ''}` },

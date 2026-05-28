@@ -97,7 +97,7 @@ const StartAttendanceScreen: React.FC = () => {
 
     if (startSessionThunk.fulfilled.match(result)) {
       const session = result.payload;
-      navigation.navigate('LiveScan' as never, { sessionId: session.id } as never);
+      (navigation as any).navigate('LiveScan', { sessionId: session.id });
     } else {
       Alert.alert('Error', result.payload as string || 'Failed to start session');
     }
@@ -166,7 +166,7 @@ const StartAttendanceScreen: React.FC = () => {
             <Button
               title="Continue Scanning"
               onPress={() =>
-                navigation.navigate('LiveScan' as never, { sessionId: currentSession.id } as never)
+                (navigation as any).navigate('LiveScan', { sessionId: currentSession.id })
               }
               fullWidth
               size="lg"
