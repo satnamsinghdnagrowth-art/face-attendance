@@ -65,6 +65,11 @@ export const env = {
   // Logging
   LOG_LEVEL: optionalEnv('LOG_LEVEL', 'info'),
   LOG_DIR: optionalEnv('LOG_DIR', './logs'),
+
+  // Cloudinary (file storage)
+  CLOUDINARY_CLOUD_NAME: optionalEnv('CLOUDINARY_CLOUD_NAME', ''),
+  CLOUDINARY_API_KEY: optionalEnv('CLOUDINARY_API_KEY', ''),
+  CLOUDINARY_API_SECRET: optionalEnv('CLOUDINARY_API_SECRET', ''),
 } as const;
 
 export type Env = typeof env;

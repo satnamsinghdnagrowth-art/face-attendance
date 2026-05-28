@@ -1,42 +1,11 @@
 import multer, { FileFilterCallback } from 'multer';
 import path from 'path';
-import fs from 'fs';
 import { Request, Response, NextFunction } from 'express';
-import { v4 as uuidv4 } from 'uuid';
 import env from '../config/env';
 import { errorResponse } from '../utils/response';
-import logger from '../utils/logger';
 
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
-
-const ensureDir = (dirPath: string): void => {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-    logger.info(`Created upload directory: ${dirPath}`);
-  }
-};
-
-const getUploadBase = (): string => {
-  return path.isAbsolute(env.UPLOAD_DIR)
-    ? env.UPLOAD_DIR
-    : path.join(process.cwd(), env.UPLOAD_DIR);
-};
-
-const createStorage = (subfolder: string): multer.StorageEngine => {
-  return multer.diskStorage({
-    destination: (_req: Request, _file: Express.Multer.File, cb) => {
-      const uploadPath = path.join(getUploadBase(), subfolder);
-      ensureDir(uploadPath);
-      cb(null, uploadPath);
-    },
-    filename: (_req: Request, file: Express.Multer.File, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase();
-      const filename = `${uuidv4()}${ext}`;
-      cb(null, filename);
-    },
-  });
-};
 
 const fileFilter = (_req: Request, file: Express.Multer.File, cb: FileFilterCallback): void => {
   const ext = path.extname(file.originalname).toLowerCase();
@@ -49,47 +18,18 @@ const fileFilter = (_req: Request, file: Express.Multer.File, cb: FileFilterCall
   }
 };
 
-// Profile photo upload (to uploads/photos/)
-export const uploadPhoto = multer({
-  storage: createStorage('photos'),
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB
-    files: 1,
-  },
-  fileFilter,
-});
+const createMemoryUpload = (maxSize: number) =>
+  multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: maxSize, files: 1 },
+    fileFilter,
+  });
 
-// Face image upload (to uploads/faces/)
-export const uploadFaceImage = multer({
-  storage: createStorage('faces'),
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB
-    files: 1,
-  },
-  fileFilter,
-});
+export const uploadPhoto = createMemoryUpload(5 * 1024 * 1024);
+export const uploadFaceImage = createMemoryUpload(5 * 1024 * 1024);
+export const uploadAttendanceImage = createMemoryUpload(env.MAX_FILE_SIZE);
+export const uploadInMemory = createMemoryUpload(env.MAX_FILE_SIZE);
 
-// Attendance image upload (to uploads/attendance/)
-export const uploadAttendanceImage = multer({
-  storage: createStorage('attendance'),
-  limits: {
-    fileSize: env.MAX_FILE_SIZE,
-    files: 1,
-  },
-  fileFilter,
-});
-
-// Memory storage for processing before saving
-export const uploadInMemory = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: env.MAX_FILE_SIZE,
-    files: 1,
-  },
-  fileFilter,
-});
-
-// Error handler middleware for multer errors
 export const handleMulterError = (
   err: Error,
   _req: Request,

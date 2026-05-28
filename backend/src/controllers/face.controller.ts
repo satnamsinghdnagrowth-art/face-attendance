@@ -117,9 +117,8 @@ export const registerFace = async (
     let imageUrl: string | undefined;
 
     if (req.file) {
-      // Compute embedding BEFORE saveFile moves/resizes the file
       try {
-        embedding = await computeImageEmbedding(req.file.path);
+        embedding = await computeImageEmbedding(req.file.buffer || req.file.path);
       } catch (imgErr) {
         logger.warn('Image embedding computation failed, using client embedding', { error: imgErr });
         const raw = rawEmbedding;
@@ -320,36 +319,40 @@ export const recomputeEmbeddings = async (
        WHERE is_active = true AND image_url IS NOT NULL`
     );
 
-    const uploadBase = process.env['UPLOAD_DIR'] || './uploads';
-    const absoluteBase = path.default.isAbsolute(uploadBase)
-      ? uploadBase
-      : path.default.join(process.cwd(), uploadBase);
-
     let updated = 0;
     let failed = 0;
     const errors: string[] = [];
 
     for (const row of result.rows) {
-      // image_url is like /uploads/faces/UUID.jpg — resolve to absolute
-      const relativePath = row.image_url.startsWith('/uploads/')
-        ? row.image_url.slice('/uploads/'.length)
-        : row.image_url;
-
-      const absolutePath = path.default.join(absoluteBase, relativePath);
-
-      if (!fs.default.existsSync(absolutePath)) {
-        errors.push(`Image not found: ${absolutePath}`);
-        failed++;
-        continue;
-      }
-
       try {
-        const newEmbedding = await computeImageEmbedding(absolutePath);
-        const embeddingArray = `{${newEmbedding.join(',')}}`;
+        let imageSource: string | Buffer;
 
+        if (row.image_url.startsWith('http')) {
+          const response = await fetch(row.image_url);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          imageSource = Buffer.from(await response.arrayBuffer());
+        } else {
+          const uploadBase = process.env['UPLOAD_DIR'] || './uploads';
+          const absoluteBase = path.default.isAbsolute(uploadBase)
+            ? uploadBase
+            : path.default.join(process.cwd(), uploadBase);
+          const relativePath = row.image_url.startsWith('/uploads/')
+            ? row.image_url.slice('/uploads/'.length)
+            : row.image_url;
+          const absolutePath = path.default.join(absoluteBase, relativePath);
+
+          if (!fs.default.existsSync(absolutePath)) {
+            errors.push(`Image not found: ${absolutePath}`);
+            failed++;
+            continue;
+          }
+          imageSource = absolutePath;
+        }
+
+        const newEmbedding = await computeImageEmbedding(imageSource);
         await dbQuery(
           'UPDATE face_embeddings SET embedding_vector = $1 WHERE id = $2',
-          [embeddingArray, row.id]
+          [`{${newEmbedding.join(',')}}`, row.id]
         );
         updated++;
       } catch (err) {

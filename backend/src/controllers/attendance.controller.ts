@@ -288,7 +288,7 @@ export const scanAttendance = async (
 
     if (req.file) {
       try {
-        embedding = await computeImageEmbedding(req.file.path);
+        embedding = await computeImageEmbedding(req.file.buffer || req.file.path);
       } catch (imgErr) {
         logger.warn('Scan image embedding failed, falling back to client embedding', { error: imgErr });
         const raw = typeof rawEmbedding === 'string' ? JSON.parse(rawEmbedding) as number[] : rawEmbedding;

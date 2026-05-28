@@ -1,36 +1,16 @@
-import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
+import { v4 as uuidv4 } from 'uuid';
+import cloudinary from '../config/cloudinary';
 import env from '../config/env';
 import logger from '../utils/logger';
 import { CustomError } from '../middleware/error.middleware';
 
-const SUBFOLDERS = ['photos', 'faces', 'attendance'];
+const CLOUDINARY_BASE_FOLDER = 'face-attendance';
 
 export class StorageService {
-  private readonly uploadBase: string;
-
-  constructor() {
-    this.uploadBase = path.isAbsolute(env.UPLOAD_DIR)
-      ? env.UPLOAD_DIR
-      : path.join(process.cwd(), env.UPLOAD_DIR);
-  }
-
   ensureUploadDirs(): void {
-    // Ensure base upload directory exists
-    if (!fs.existsSync(this.uploadBase)) {
-      fs.mkdirSync(this.uploadBase, { recursive: true });
-      logger.info(`Created upload base directory: ${this.uploadBase}`);
-    }
-
-    // Ensure all subfolders exist
-    for (const subfolder of SUBFOLDERS) {
-      const dirPath = path.join(this.uploadBase, subfolder);
-      if (!fs.existsSync(dirPath)) {
-        fs.mkdirSync(dirPath, { recursive: true });
-        logger.info(`Created upload directory: ${dirPath}`);
-      }
-    }
+    // No-op: Cloudinary handles storage
   }
 
   async saveFile(
@@ -38,83 +18,42 @@ export class StorageService {
     subfolder: string,
     options?: { resize?: { width: number; height: number }; quality?: number }
   ): Promise<string> {
-    const targetDir = path.join(this.uploadBase, subfolder);
-
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
+    if (!env.CLOUDINARY_CLOUD_NAME) {
+      throw new CustomError('Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET.', 500);
     }
 
-    const filename = file.filename || path.basename(file.path);
-    const targetPath = path.join(targetDir, filename);
+    let buffer = file.buffer;
+    if (!buffer) {
+      throw new CustomError('No file data available. Ensure multer memory storage is used.', 400);
+    }
 
-    // If the file is already on disk (disk storage), optionally process with sharp
-    if (file.path && fs.existsSync(file.path)) {
-      if (options?.resize || options?.quality) {
-        await this.processAndSaveImage(file.path, targetPath, options);
-        // If the file was saved to a different location, move it
-        if (file.path !== targetPath) {
-          fs.unlinkSync(file.path);
+    if (options?.resize || options?.quality) {
+      buffer = await this.processBuffer(buffer, file.originalname, options);
+    }
+
+    const publicId = `${CLOUDINARY_BASE_FOLDER}/${subfolder}/${uuidv4()}`;
+    const ext = path.extname(file.originalname).toLowerCase().replace('.', '') || 'jpg';
+    const format = ext === 'jpg' ? 'jpeg' : ext;
+
+    const result = await new Promise<{ secure_url: string }>((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { public_id: publicId, format, overwrite: true, resource_type: 'image' },
+        (error, uploadResult) => {
+          if (error) reject(error);
+          else resolve(uploadResult as { secure_url: string });
         }
-      } else if (file.path !== targetPath) {
-        fs.renameSync(file.path, targetPath);
-      }
-    } else if (file.buffer) {
-      // Memory storage — write buffer to disk, optionally processing
-      if (options?.resize || options?.quality) {
-        await this.processBufferAndSave(file.buffer, targetPath, options);
-      } else {
-        fs.writeFileSync(targetPath, file.buffer);
-      }
-    }
+      ).end(buffer);
+    });
 
-    const publicUrl = this.getFileUrl(filename, subfolder);
-    logger.debug('File saved', { filename, subfolder, publicUrl });
-    return publicUrl;
+    logger.debug('File uploaded to Cloudinary', { publicId, url: result.secure_url });
+    return result.secure_url;
   }
 
-  private async processAndSaveImage(
-    sourcePath: string,
-    targetPath: string,
-    options: { resize?: { width: number; height: number }; quality?: number }
-  ): Promise<void> {
-    let pipeline = sharp(sourcePath);
-
-    if (options.resize) {
-      pipeline = pipeline.resize(options.resize.width, options.resize.height, {
-        fit: 'cover',
-        withoutEnlargement: true,
-      });
-    }
-
-    const ext = path.extname(targetPath).toLowerCase();
-    if (ext === '.jpg' || ext === '.jpeg') {
-      pipeline = pipeline.jpeg({ quality: options.quality || 85 });
-    } else if (ext === '.png') {
-      pipeline = pipeline.png({ compressionLevel: 8 });
-    } else if (ext === '.webp') {
-      pipeline = pipeline.webp({ quality: options.quality || 85 });
-    }
-
-    // Sharp cannot read and write the same file — use a temp path then rename
-    if (sourcePath === targetPath) {
-      const tmpPath = `${targetPath}.tmp`;
-      try {
-        await pipeline.toFile(tmpPath);
-        fs.renameSync(tmpPath, targetPath);
-      } catch (err) {
-        if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
-        throw err;
-      }
-    } else {
-      await pipeline.toFile(targetPath);
-    }
-  }
-
-  private async processBufferAndSave(
+  private async processBuffer(
     buffer: Buffer,
-    targetPath: string,
+    originalname: string,
     options: { resize?: { width: number; height: number }; quality?: number }
-  ): Promise<void> {
+  ): Promise<Buffer> {
     let pipeline = sharp(buffer);
 
     if (options.resize) {
@@ -124,7 +63,7 @@ export class StorageService {
       });
     }
 
-    const ext = path.extname(targetPath).toLowerCase();
+    const ext = path.extname(originalname).toLowerCase();
     if (ext === '.jpg' || ext === '.jpeg') {
       pipeline = pipeline.jpeg({ quality: options.quality || 85 });
     } else if (ext === '.png') {
@@ -133,26 +72,33 @@ export class StorageService {
       pipeline = pipeline.webp({ quality: options.quality || 85 });
     }
 
-    await pipeline.toFile(targetPath);
+    return pipeline.toBuffer();
   }
 
-  async deleteFile(filePath: string): Promise<void> {
-    // filePath can be a public URL like /uploads/photos/uuid.jpg or an absolute path
-    let absolutePath: string;
+  async deleteFile(fileUrl: string): Promise<void> {
+    if (!fileUrl || !env.CLOUDINARY_CLOUD_NAME) return;
 
-    if (filePath.startsWith('/uploads/')) {
-      absolutePath = path.join(this.uploadBase, '..', filePath);
-    } else if (path.isAbsolute(filePath)) {
-      absolutePath = filePath;
-    } else {
-      absolutePath = path.join(this.uploadBase, filePath);
+    const publicId = this.extractPublicId(fileUrl);
+    if (!publicId) {
+      logger.warn('Could not extract Cloudinary public_id from URL', { fileUrl });
+      return;
     }
 
-    if (fs.existsSync(absolutePath)) {
-      fs.unlinkSync(absolutePath);
-      logger.debug('File deleted', { path: absolutePath });
-    } else {
-      logger.warn('File not found for deletion', { path: absolutePath });
+    try {
+      await cloudinary.uploader.destroy(publicId);
+      logger.debug('File deleted from Cloudinary', { publicId });
+    } catch (error) {
+      logger.warn('Failed to delete file from Cloudinary', { publicId, error });
+    }
+  }
+
+  private extractPublicId(url: string): string | null {
+    try {
+      // URL format: https://res.cloudinary.com/cloud/image/upload/v123/folder/file.ext
+      const match = url.match(/\/upload\/(?:v\d+\/)?(.+)\.[^.]+$/);
+      return match ? match[1] ?? null : null;
+    } catch {
+      return null;
     }
   }
 
@@ -161,46 +107,32 @@ export class StorageService {
   }
 
   getAbsolutePath(filename: string, subfolder: string): string {
-    return path.join(this.uploadBase, subfolder, filename);
+    return path.join(env.UPLOAD_DIR, subfolder, filename);
   }
 
-  async getImageMetadata(filePath: string): Promise<sharp.Metadata> {
-    const absolutePath = path.isAbsolute(filePath)
-      ? filePath
-      : path.join(this.uploadBase, filePath);
-
-    if (!fs.existsSync(absolutePath)) {
-      throw new CustomError('File not found', 404);
-    }
-
-    return sharp(absolutePath).metadata();
+  async getImageMetadata(fileUrl: string): Promise<sharp.Metadata> {
+    const response = await fetch(fileUrl);
+    if (!response.ok) throw new CustomError('Failed to fetch image', 502);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return sharp(buffer).metadata();
   }
 
   async generateThumbnail(
-    sourcePath: string,
-    subfolder: string,
-    filename: string,
-    width: number = 150,
-    height: number = 150
+    _sourcePath: string,
+    _subfolder: string,
+    _filename: string,
+    _width = 150,
+    _height = 150
   ): Promise<string> {
-    const thumbFilename = `thumb_${filename}`;
-    const targetPath = path.join(this.uploadBase, subfolder, thumbFilename);
-
-    await sharp(sourcePath)
-      .resize(width, height, { fit: 'cover' })
-      .jpeg({ quality: 70 })
-      .toFile(targetPath);
-
-    return this.getFileUrl(thumbFilename, subfolder);
+    throw new CustomError('generateThumbnail is not supported with Cloudinary storage', 501);
   }
 
-  fileExists(filename: string, subfolder: string): boolean {
-    const absolutePath = this.getAbsolutePath(filename, subfolder);
-    return fs.existsSync(absolutePath);
+  fileExists(_filename: string, _subfolder: string): boolean {
+    return false;
   }
 
   getUploadBase(): string {
-    return this.uploadBase;
+    return '';
   }
 }
 

@@ -132,20 +132,16 @@ export const validateEmbedding = (
  * selfies / attendance shots).  This makes the embedding far more robust
  * across different shooting distances and backgrounds than using the full frame.
  */
-export const computeImageEmbedding = async (imagePath: string): Promise<number[]> => {
-  // Read image dimensions so we can derive a face-centred crop
-  const metadata = await sharp(imagePath).metadata();
+export const computeImageEmbedding = async (imageSource: string | Buffer): Promise<number[]> => {
+  const metadata = await sharp(imageSource).metadata();
   const imgW = metadata.width ?? 640;
   const imgH = metadata.height ?? 640;
 
-  // Center-crop: 60 % of the shorter dimension, biased slightly upward
   const cropSize = Math.floor(Math.min(imgW, imgH) * 0.6);
   const left = Math.floor((imgW - cropSize) / 2);
-  // Place crop slightly above vertical centre (faces sit in the upper half of
-  // typical portrait shots)
   const top = Math.max(0, Math.floor((imgH - cropSize) / 3));
 
-  const { data } = await sharp(imagePath)
+  const { data } = await sharp(imageSource)
     .extract({ left, top, width: cropSize, height: cropSize })
     .resize(16, 8, { fit: 'fill' })
     .grayscale()

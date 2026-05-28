@@ -1,7 +1,6 @@
 import express, { Application } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import path from 'path';
 import rateLimit from 'express-rate-limit';
 import env from './config/env';
 import logger from './utils/logger';
@@ -90,25 +89,6 @@ const createApp = (): Application => {
     });
     next();
   });
-
-  // ─── Static File Serving ─────────────────────────────────────────────────
-  // Serve uploads directory at /uploads
-  const uploadsPath = path.isAbsolute(env.UPLOAD_DIR)
-    ? env.UPLOAD_DIR
-    : path.join(__dirname, '..', env.UPLOAD_DIR.replace('./', ''));
-
-  app.use(
-    '/uploads',
-    express.static(uploadsPath, {
-      maxAge: '1d',
-      etag: true,
-      lastModified: true,
-      setHeaders: (res) => {
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        res.setHeader('Cache-Control', 'public, max-age=86400');
-      },
-    })
-  );
 
   // ─── Health Check ────────────────────────────────────────────────────────
   app.get('/health', async (req, res) => {
