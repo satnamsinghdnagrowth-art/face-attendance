@@ -2,7 +2,7 @@ import { io, Socket } from 'socket.io-client';
 import * as SecureStore from 'expo-secure-store';
 import { AttendanceSession, ScanResult } from '@/types';
 
-const SOCKET_URL = 'http://192.168.29.85:3000';
+const SOCKET_URL = 'https://face-attendance-9kza.onrender.com';
 
 class SocketService {
   private socket: Socket | null = null;

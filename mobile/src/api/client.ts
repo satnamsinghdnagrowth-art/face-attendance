@@ -2,7 +2,7 @@ import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } fro
 import * as SecureStore from 'expo-secure-store';
 
 // Your backend machine's local network IP — phone must be on same WiFi
-const API_BASE_URL = 'http://192.168.29.85:3000/api';
+const API_BASE_URL = 'https://face-attendance-9kza.onrender.com/api';
 
 let isRefreshing = false;
 let failedQueue: Array<{
