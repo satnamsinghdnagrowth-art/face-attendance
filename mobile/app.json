@@ -1,0 +1,72 @@
+{
+  "expo": {
+    "name": "FaceAttend",
+    "slug": "face-attend",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#2563EB"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.faceattend.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "FaceAttend uses the camera to capture face images for attendance registration and recognition.",
+        "NSMicrophoneUsageDescription": "FaceAttend may use the microphone for video processing.",
+        "NSPhotoLibraryUsageDescription": "FaceAttend needs access to your photo library to upload profile pictures.",
+        "NSLocationWhenInUseUsageDescription": "FaceAttend uses your location to verify attendance is being marked at the correct venue.",
+        "NSFaceIDUsageDescription": "FaceAttend uses Face ID for secure authentication."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#2563EB"
+      },
+      "package": "com.faceattend.app",
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow FaceAttend to access your camera for face recognition attendance."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow FaceAttend to use your location to verify attendance venue."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow FaceAttend to access your photos for profile picture upload."
+        }
+      ],
+      "expo-secure-store"
+    ],
+    "extra": {
+      "apiUrl": "http://192.168.29.85:3000",
+      "socketUrl": "http://192.168.29.85:3000"
+    }
+  }
+}

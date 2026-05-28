@@ -1,0 +1,10 @@
+export declare const hashPassword: (password: string) => Promise<string>;
+export declare const comparePassword: (plain: string, hash: string) => Promise<boolean>;
+export declare const generateToken: (length?: number) => string;
+export declare const generateSecureOTP: (digits?: number) => string;
+export declare const hashToken: (token: string) => string;
+export declare const encryptData: (data: string, key?: string) => string;
+export declare const decryptData: (encrypted: string, key?: string) => string;
+export declare const generateUUID: () => string;
+export declare const timingSafeCompare: (a: string, b: string) => boolean;
+//# sourceMappingURL=encryption.d.ts.map
