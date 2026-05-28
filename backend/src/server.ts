@@ -12,21 +12,9 @@ import cron from 'node-cron';
 let server: http.Server;
 
 const startServer = async (): Promise<void> => {
-  // ─── Health Checks ──────────────────────────────────────────────────────
-  logger.info('Checking service dependencies...');
-
-  const dbOk = await checkDatabaseHealth();
-  if (!dbOk) {
-    logger.error('Database connection failed. Exiting.');
-    process.exit(1);
-  }
-
-  const redisOk = await checkRedisHealth();
-  if (!redisOk) {
-    logger.warn('Redis connection failed. Some features (rate limiting, sessions) may be degraded.');
-  }
-
   // ─── HTTP Server ────────────────────────────────────────────────────────
+  // Bind the port FIRST so Render's port scanner succeeds immediately.
+  // Health checks run in the background after the server is listening.
   server = http.createServer(app);
 
   // ─── Socket.IO ──────────────────────────────────────────────────────────
@@ -89,35 +77,27 @@ const startServer = async (): Promise<void> => {
 
   // ─── Start Listening ────────────────────────────────────────────────────
   await new Promise<void>((resolve, reject) => {
-    server.once('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        logger.warn(`Port ${env.PORT} in use — killing existing process and retrying...`);
-        // Kill the process holding the port, then retry
-        const { execSync } = require('child_process') as typeof import('child_process');
-        try {
-          execSync(`fuser -k ${env.PORT}/tcp 2>/dev/null || true`);
-        } catch { /* ignore */ }
-        setTimeout(() => {
-          server.listen(env.PORT, () => resolve());
-        }, 500);
-      } else {
-        reject(err);
-      }
-    });
-    server.listen(env.PORT, () => {
-      resolve();
-    });
+    server.once('error', reject);
+    // Bind to 0.0.0.0 so Render (and Docker) can reach the port externally.
+    server.listen(env.PORT, '0.0.0.0', () => resolve());
   });
 
-  logger.info(`Server started`, {
-    port: env.PORT,
-    environment: env.NODE_ENV,
-    pid: process.pid,
+  logger.info('Server listening', { port: env.PORT, env: env.NODE_ENV, pid: process.pid });
+  logger.info(`API:    http://0.0.0.0:${env.PORT}/api`);
+  logger.info(`Health: http://0.0.0.0:${env.PORT}/health`);
+
+  // ─── Background dependency checks ───────────────────────────────────────
+  // Run AFTER the port is bound — never block the listen step.
+  checkDatabaseHealth().then((ok) => {
+    if (!ok) {
+      logger.error('Database unreachable after server start — exiting.');
+      gracefulShutdown('DB_UNAVAILABLE').catch(() => process.exit(1));
+    }
   });
 
-  logger.info(`API available at http://localhost:${env.PORT}/api`);
-  logger.info(`Health check at http://localhost:${env.PORT}/health`);
-  logger.info(`Socket.IO available at ws://localhost:${env.PORT}`);
+  checkRedisHealth().then((ok) => {
+    if (!ok) logger.warn('Redis unavailable — session cache and blacklist disabled.');
+  });
 };
 
 // ─── Graceful Shutdown ────────────────────────────────────────────────────────

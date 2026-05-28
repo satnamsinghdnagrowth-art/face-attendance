@@ -1,5 +1,5 @@
 import { query, withTransaction } from '../config/database';
-import { redisClient } from '../config/redis';
+import { safeGet, safeSetex, safeDel } from '../config/redis';
 import {
   User,
   PublicUser,
@@ -79,12 +79,12 @@ export class AuthService {
       [user.id, tokenHash]
     );
 
-    // Cache user session in Redis (non-fatal — DB is source of truth)
-    redisClient.setex(
+    // Cache session in Redis (fire-and-forget — DB is source of truth)
+    void safeSetex(
       `session:${user.id}`,
       REFRESH_TOKEN_TTL,
       JSON.stringify({ userId: user.id, role: user.role, email: user.email })
-    ).catch((err: Error) => logger.warn('Redis session cache failed', { error: err.message }));
+    );
 
     logger.info('User logged in', { userId: user.id, email: user.email });
 
@@ -194,9 +194,7 @@ export class AuthService {
       await query('DELETE FROM refresh_tokens WHERE user_id = $1', [userId]);
     }
 
-    // Remove session from Redis (non-fatal)
-    redisClient.del(`session:${userId}`)
-      .catch((err: Error) => logger.warn('Redis session delete failed', { error: err.message }));
+    void safeDel(`session:${userId}`);
 
     // Blacklist access token if provided
     if (accessToken) {
@@ -211,8 +209,7 @@ export class AuthService {
       'DELETE FROM refresh_tokens WHERE user_id = $1',
       [userId]
     );
-    redisClient.del(`session:${userId}`)
-      .catch((err: Error) => logger.warn('Redis session delete failed', { error: err.message }));
+    void safeDel(`session:${userId}`);
     logger.info('User logged out from all devices', { userId });
   }
 
@@ -267,9 +264,7 @@ export class AuthService {
       );
     });
 
-    // Remove session cache (non-fatal)
-    redisClient.del(`session:${userId}`)
-      .catch((err: Error) => logger.warn('Redis session delete failed', { error: err.message }));
+    void safeDel(`session:${userId}`);
 
     logger.info('Password reset successful', { userId });
   }
@@ -277,10 +272,8 @@ export class AuthService {
   async generateOTP(userId: string, type: string = 'password_reset'): Promise<string> {
     const otp = generateSecureOTP(6);
 
-    // Store OTP in Redis with TTL (non-fatal — DB is fallback)
     const redisKey = `otp:${userId}:${type}`;
-    redisClient.setex(redisKey, OTP_TTL, otp)
-      .catch((err: Error) => logger.warn('Redis OTP cache failed', { error: err.message }));
+    void safeSetex(redisKey, OTP_TTL, otp);
 
     // Also store in DB for audit trail
     await query(
@@ -293,16 +286,12 @@ export class AuthService {
   }
 
   async verifyOTP(userId: string, otp: string, type: string = 'password_reset'): Promise<boolean> {
-    // Check Redis first (fast path, falls through to DB on failure)
+    // Check Redis first (fast path — safeGet returns null on failure → falls through to DB)
     const redisKey = `otp:${userId}:${type}`;
-    try {
-      const storedOTP = await redisClient.get(redisKey);
-      if (storedOTP && storedOTP === otp) {
-        redisClient.del(redisKey).catch(() => {});
-        return true;
-      }
-    } catch {
-      logger.warn('Redis OTP check failed, falling back to DB');
+    const cachedOTP = await safeGet(redisKey);
+    if (cachedOTP && cachedOTP === otp) {
+      void safeDel(redisKey);
+      return true;
     }
 
     // Fallback to DB check

@@ -4,7 +4,7 @@ import { AuthRequest, JWTPayload } from '../types';
 import env from '../config/env';
 import { unauthorizedResponse } from '../utils/response';
 import logger from '../utils/logger';
-import { redisClient } from '../config/redis';
+import { safeGet, safeSetex } from '../config/redis';
 
 export const authenticateToken = async (
   req: AuthRequest,
@@ -22,17 +22,11 @@ export const authenticateToken = async (
   }
 
   try {
-    // Check if token is blacklisted (non-fatal — skip if Redis is unavailable)
-    try {
-      const isBlacklisted = await redisClient.get(`blacklist:${token}`);
-      if (isBlacklisted) {
-        unauthorizedResponse(res, 'Token has been revoked');
-        return;
-      }
-    } catch (redisErr) {
-      logger.warn('Redis blacklist check failed, skipping', {
-        error: redisErr instanceof Error ? redisErr.message : String(redisErr),
-      });
+    // safeGet returns null when Redis is unavailable — blacklist check is skipped gracefully.
+    const isBlacklisted = await safeGet(`blacklist:${token}`);
+    if (isBlacklisted) {
+      unauthorizedResponse(res, 'Token has been revoked');
+      return;
     }
 
     const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET) as JWTPayload;
@@ -74,18 +68,13 @@ export const optionalAuthenticateToken = async (
   }
 
   try {
-    let isBlacklisted = false;
-    try {
-      isBlacklisted = !!(await redisClient.get(`blacklist:${token}`));
-    } catch {
-      // Redis unavailable — treat token as not blacklisted
-    }
+    const isBlacklisted = await safeGet(`blacklist:${token}`);
     if (!isBlacklisted) {
       const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET) as JWTPayload;
       req.user = decoded;
     }
   } catch {
-    // Ignore errors for optional auth
+    // Ignore — optional auth never blocks the request
   }
 
   next();
@@ -111,12 +100,7 @@ export const verifyRefreshToken = (token: string): { userId: string } => {
   return jwt.verify(token, env.JWT_REFRESH_SECRET) as { userId: string };
 };
 
+// safeSetex never throws — blacklisting is best-effort when Redis is degraded.
 export const blacklistToken = async (token: string, expiresIn: number): Promise<void> => {
-  try {
-    await redisClient.setex(`blacklist:${token}`, expiresIn, '1');
-  } catch (err) {
-    logger.warn('Redis token blacklist failed', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
+  await safeSetex(`blacklist:${token}`, expiresIn, '1');
 };
