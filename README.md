@@ -1,6 +1,8 @@
-# FaceAttend — Face Recognition Attendance System
+# ExamGuard — Exam Monitoring & Face Verification System
 
-A production-ready, cross-platform mobile attendance system for schools and colleges. Teachers mark attendance automatically by scanning the classroom with their phone camera — the system detects and identifies students using face recognition in real time.
+A production-ready, cross-platform mobile platform for secure exam hall management. Hall invigilators verify student entry using face recognition. Chief examiners monitor all halls in real time, receive instant fraud alerts, and review flagged cases. The system also supports traditional face-based classroom attendance for teachers.
+
+**Live backend:** `https://face-attendance-9kza.onrender.com`
 
 ---
 
@@ -10,15 +12,16 @@ A production-ready, cross-platform mobile attendance system for schools and coll
 2. [Architecture](#2-architecture)
 3. [Prerequisites](#3-prerequisites)
 4. [Project Structure](#4-project-structure)
-5. [Backend Setup & Configuration](#5-backend-setup--configuration)
-6. [Mobile App Setup & Configuration](#6-mobile-app-setup--configuration)
+5. [Backend Setup](#5-backend-setup)
+6. [Mobile App Setup](#6-mobile-app-setup)
 7. [Running the Application](#7-running-the-application)
-8. [Running with Docker](#8-running-with-docker)
+8. [Docker](#8-docker)
 9. [API Reference](#9-api-reference)
-10. [Face Recognition Flow](#10-face-recognition-flow)
-11. [User Roles & Default Credentials](#11-user-roles--default-credentials)
-12. [Environment Variables Reference](#12-environment-variables-reference)
-13. [Troubleshooting](#13-troubleshooting)
+10. [Verification Flow](#10-verification-flow)
+11. [User Roles & Credentials](#11-user-roles--credentials)
+12. [Environment Variables](#12-environment-variables)
+13. [EAS Build (Android / iOS)](#13-eas-build-android--ios)
+14. [Troubleshooting](#14-troubleshooting)
 
 ---
 
@@ -26,87 +29,83 @@ A production-ready, cross-platform mobile attendance system for schools and coll
 
 | Layer | Technology |
 |---|---|
-| Mobile App | React Native (Expo) + TypeScript |
-| State Management | Redux Toolkit |
-| Backend API | Node.js + Express + TypeScript |
-| Database | PostgreSQL 15 |
-| Cache / Sessions | Redis 7 |
-| File Storage | Local disk (served via Express static) |
-| Real-time | Socket.IO |
-| Face Detection (mobile) | expo-face-detector |
-| Face Matching (backend) | Cosine similarity on stored embeddings |
-| Authentication | JWT (access 15 min + refresh 7 days) |
+| Mobile App | React Native (Expo SDK 51) + TypeScript |
+| State Management | Redux Toolkit + socket middleware |
+| Backend API | Node.js 20 + Express + TypeScript |
+| Database | PostgreSQL 15 (Neon / Render PostgreSQL) |
+| Cache / Token Blacklist | Redis 7 (Upstash — optional, degrades gracefully) |
+| File Storage | Cloudinary (production) / local disk (dev) |
+| Real-time | Socket.IO (exam rooms + hall rooms) |
+| Face Embedding (backend) | `sharp` — pixel-based 128-dim embedding via centre-crop + grayscale |
+| Face Matching | Cosine similarity on stored `float8[]` embeddings |
+| Authentication | JWT — access 15 min + refresh 7 days |
+| Deployment | Render.com (backend Docker) + EAS (mobile builds) |
+| CI Tests | Jest — 223 tests, all passing |
 
 ---
 
 ## 2. Architecture
 
 ```
-┌─────────────────────────────────┐
-│     React Native Mobile App     │
-│   (Expo, iOS / Android)         │
-│                                 │
-│  Student  │ Teacher │  Admin    │
-│  Screens  │ Screens │  Screens  │
-└─────────────────┬───────────────┘
-                  │ HTTPS / REST API
-                  │ WebSocket (Socket.IO)
-                  ▼
-┌─────────────────────────────────┐
-│     Node.js + Express Backend   │
-│           Port 3000             │
-│                                 │
-│  Auth API  │  Face API  │  ...  │
-│  Attendance│  Reports   │  ...  │
-│                                 │
-│  /uploads  (local file storage) │
-└────┬──────────────┬─────────────┘
-     │              │
-     ▼              ▼
-┌─────────┐   ┌──────────┐
-│PostgreSQL│   │  Redis   │
-│  Port   │   │  Port    │
-│  5432   │   │  6379    │
-└─────────┘   └──────────┘
+┌──────────────────────────────────────────────────────┐
+│               React Native Mobile App                │
+│       (Expo, iOS / Android — EAS build)              │
+│                                                      │
+│  Student │ Teacher │ Admin │ Chief │ Invigilator      │
+└──────────────────────┬───────────────────────────────┘
+                       │ HTTPS REST  (/api  + /api/v2/)
+                       │ WebSocket   (Socket.IO)
+                       ▼
+┌──────────────────────────────────────────────────────┐
+│          Node.js + Express Backend  (port 3000)      │
+│                                                      │
+│  /api/auth      /api/face       /api/attendance      │
+│  /api/v2/exams  /api/v2/verify  /api/v2/reports      │
+│                                                      │
+│  Socket.IO rooms:                                    │
+│    exam:{examId}         — chief examiner            │
+│    exam_hall:{hallId}    — hall invigilator          │
+│    user:{userId}         — personal notifications   │
+└────┬───────────────────────────┬─────────────────────┘
+     │                           │
+     ▼                           ▼
+┌──────────┐               ┌──────────┐
+│PostgreSQL│               │  Redis   │
+│ (Neon /  │               │(Upstash) │
+│  Render) │               │optional  │
+└──────────┘               └──────────┘
 ```
+
+**Redis is optional.** When Redis is unavailable the backend runs in degraded mode — token blacklisting and session caching are skipped but all core features (auth, verification, attendance) continue working via the database.
 
 ---
 
 ## 3. Prerequisites
 
-Install the following tools before getting started:
-
 ### Required
 
-| Tool | Version | Download |
+| Tool | Version | Install |
 |---|---|---|
-| Node.js | >= 20.x LTS | https://nodejs.org |
-| npm | >= 10.x | Bundled with Node.js |
-| PostgreSQL | >= 15.x | https://www.postgresql.org/download |
-| Redis | >= 7.x | https://redis.io/docs/install |
-| Expo CLI | Latest | `npm install -g expo-cli` |
+| Node.js | ≥ 20 LTS | https://nodejs.org |
+| npm | ≥ 10 | bundled with Node.js |
+| PostgreSQL | ≥ 15 | https://www.postgresql.org/download |
+| Expo CLI | latest | `npm i -g expo-cli` |
+| EAS CLI | latest | `npm i -g eas-cli` |
 
-### Mobile Development (choose your target platform)
+### Mobile targets
 
-**For Android:**
-- Android Studio with Android SDK (API Level 33+)
-- Android emulator OR a physical Android device
-- Enable "USB Debugging" on physical device
+**Android:** Android Studio + Android SDK (API 33+). USB Debugging on physical device.
 
-**For iOS (macOS only):**
-- Xcode 15+ from the Mac App Store
-- iOS Simulator OR a physical iPhone (requires Apple Developer account for device)
+**iOS (macOS only):** Xcode 15+ + iOS Simulator or physical device (Apple Developer account required for device builds).
 
-**Expo Go (easiest — no emulator needed):**
-- Install [Expo Go](https://expo.dev/client) on your physical Android or iOS device
-- Connect phone and laptop to the same Wi-Fi network
+**Expo Go (fastest start):** Install [Expo Go](https://expo.dev/client) on your phone and scan the QR code. Phone and laptop must be on the same Wi-Fi.
 
-### Optional (for Docker setup)
+### Optional (Docker)
 
 | Tool | Version |
 |---|---|
-| Docker | >= 24.x |
-| Docker Compose | >= 2.x |
+| Docker | ≥ 24 |
+| Docker Compose | ≥ 2 |
 
 ---
 
@@ -115,117 +114,128 @@ Install the following tools before getting started:
 ```
 face_recognization_attendance_system/
 ├── README.md
-├── plan.md
+├── TECHNICAL_PROGRESS.md
 │
-├── backend/                          # Node.js + Express API
-│   ├── .env.example                  # Copy to .env and fill in values
+├── backend/                               # Node.js + Express API
+│   ├── .env.example
 │   ├── package.json
 │   ├── tsconfig.json
-│   ├── Dockerfile
+│   ├── Dockerfile                         # Auto-runs migrations then starts server
 │   ├── docker-compose.yml
-│   ├── uploads/                      # Auto-created — local file storage
-│   │   ├── photos/                   # User profile photos
-│   │   ├── faces/                    # Face enrollment images
-│   │   └── attendance/               # Attendance proof images
+│   ├── render.yaml                        # Render.com deploy config
 │   └── src/
-│       ├── server.ts                 # Entry point — HTTP + Socket.IO
-│       ├── app.ts                    # Express app setup
+│       ├── server.ts                      # HTTP + Socket.IO entry point
+│       ├── app.ts                         # Express app setup
 │       ├── config/
-│       │   ├── database.ts           # PostgreSQL pool
-│       │   ├── redis.ts              # Redis client
-│       │   └── env.ts                # Env variable validation
-│       ├── types/index.ts            # Shared TypeScript types
+│       │   ├── database.ts                # PostgreSQL pool
+│       │   ├── redis.ts                   # Redis with graceful degradation
+│       │   └── env.ts                     # Validated environment variables
 │       ├── middleware/
-│       │   ├── auth.middleware.ts    # JWT verification
-│       │   ├── role.middleware.ts    # Role-based access control
-│       │   ├── upload.middleware.ts  # Multer local disk config
-│       │   ├── validate.middleware.ts
-│       │   └── error.middleware.ts   # Global error handler
+│       │   ├── auth.middleware.ts         # JWT verify (safeGet for blacklist)
+│       │   ├── role.middleware.ts         # Role-based access (requireRole)
+│       │   ├── upload.middleware.ts       # Multer memory storage
+│       │   ├── validate.middleware.ts     # express-validator runner
+│       │   └── error.middleware.ts        # Global error handler
+│       ├── utils/
+│       │   ├── face.utils.ts              # computeImageEmbedding (sharp), cosine similarity
+│       │   ├── uuid.validator.ts          # PostgreSQL-compatible UUID regex (replaces isUUID())
+│       │   ├── encryption.ts              # bcrypt, AES, token helpers
+│       │   ├── response.ts                # Standardised API response helpers
+│       │   └── logger.ts                  # Winston logger
 │       ├── services/
-│       │   ├── auth.service.ts       # Login, register, tokens, OTP
-│       │   ├── face.service.ts       # Embedding storage + comparison
-│       │   ├── attendance.service.ts # Session + record management
-│       │   ├── storage.service.ts    # Local file save/delete
-│       │   └── notification.service.ts
-│       ├── controllers/              # Request handlers
-│       ├── routes/                   # Route definitions
+│       │   ├── auth.service.ts            # Login, register, OTP, token refresh
+│       │   ├── face.service.ts            # Embedding storage + comparison
+│       │   ├── verification.service.ts    # Exam entry verification + verdict logic
+│       │   ├── exam.service.ts            # Exam / hall / session / enrolment CRUD
+│       │   ├── exam.alert.service.ts      # Alert raise / resolve / auto-raise
+│       │   ├── attendance.service.ts      # Class session + attendance records
+│       │   ├── notification.service.ts    # Socket.IO broadcast helpers
+│       │   ├── storage.service.ts         # Cloudinary / local file save
+│       │   ├── pdf.service.ts             # pdfkit compliance report
+│       │   ├── liveness.service.ts        # Liveness stub (plug in Vision / Rekognition)
+│       │   ├── ocr.service.ts             # ID-card OCR stub
+│       │   └── sis.integration.service.ts # University SIS webhook
+│       ├── controllers/                   # Request handlers per domain
+│       ├── routes/                        # Route definitions
 │       ├── sockets/
-│       │   └── attendance.socket.ts  # Socket.IO event handlers
+│       │   └── attendance.socket.ts       # Socket.IO auth (safeGet) + event handlers
 │       └── migrations/
-│           ├── 001_init.sql          # Full DB schema
-│           └── migrate.ts            # Migration runner
+│           ├── 001_init.sql               # Schema + super admin seed
+│           ├── 002_seed_test_users.sql    # Test users
+│           ├── 003_seed_classes.sql       # Classes + subjects
+│           ├── 004_exam_monitoring.sql    # Exam tables + role extension
+│           ├── 005_seed_exam_data.sql     # Exam accounts + CS-FINAL-2026
+│           ├── 006_multi_tenant.sql       # Institutions table (multi-tenancy)
+│           ├── 007_fix_admin_password.sql # Admin@123 hash correction
+│           └── migrate.ts                 # Idempotent migration runner
 │
-└── mobile/                           # Expo React Native App
-    ├── App.tsx                       # Root component
-    ├── app.json                      # Expo config
+└── mobile/                                # Expo React Native app
+    ├── App.tsx                            # Root — Provider, ErrorBoundary, Navigator
+    ├── app.json                           # Expo config (slug: face-attend)
+    ├── eas.json                           # EAS build profiles
     ├── package.json
-    ├── tsconfig.json
-    ├── babel.config.js
     └── src/
-        ├── types/index.ts
-        ├── constants/
-        │   ├── colors.ts             # Design system colors
-        │   └── theme.ts              # react-native-paper theme
         ├── api/
-        │   ├── client.ts             # Axios instance + interceptors
+        │   ├── client.ts                  # Axios + token interceptor + socket sync on refresh
         │   ├── auth.api.ts
+        │   ├── exam.api.ts                # Full v2 exam + verify API
         │   ├── face.api.ts
         │   ├── attendance.api.ts
         │   └── user.api.ts
-        ├── store/                    # Redux Toolkit
-        │   ├── index.ts
+        ├── store/
+        │   ├── index.ts                   # Store + socketMiddleware
         │   └── slices/
-        │       ├── auth.slice.ts
+        │       ├── auth.slice.ts          # Auth state (socket lifecycle in middleware)
+        │       ├── exam.slice.ts          # Exam / session / verification state
         │       ├── attendance.slice.ts
         │       └── ui.slice.ts
+        ├── middleware/
+        │   └── socketMiddleware.ts        # Socket connect/disconnect on auth events
         ├── navigation/
-        │   ├── AppNavigator.tsx      # Root — auth check + role routing
+        │   ├── AppNavigator.tsx           # Role-based root navigator
         │   ├── AuthNavigator.tsx
-        │   ├── StudentNavigator.tsx
+        │   ├── AdminNavigator.tsx
         │   ├── TeacherNavigator.tsx
-        │   └── AdminNavigator.tsx
+        │   ├── StudentNavigator.tsx
+        │   ├── ExamNavigator.tsx          # Chief examiner (5 tabs)
+        │   └── InvigilatorNavigator.tsx   # Hall invigilator (3 tabs)
         ├── screens/
-        │   ├── auth/                 # Login, ForgotPassword, OTP
-        │   ├── student/              # Dashboard, History, Enrollment, Profile
-        │   ├── teacher/              # Dashboard, StartSession, LiveScan, Review
-        │   └── admin/               # Analytics, StudentMgmt, TeacherMgmt, Reports
-        ├── components/
-        │   ├── common/               # Button, Input, Card, Avatar, Badge
-        │   └── camera/               # FaceOverlay, ScanResultOverlay
+        │   ├── auth/                      # Login, ForgotPassword, OTP
+        │   ├── admin/                     # User mgmt, analytics, reports
+        │   ├── teacher/                   # Dashboard, StartSession, LiveScan
+        │   ├── student/                   # Dashboard, History, Enrolment, Profile
+        │   └── exam/
+        │       ├── InvigilatorHomeScreen.tsx
+        │       ├── HallSessionScreen.tsx
+        │       ├── StudentListScreen.tsx  # Real-time socket verdicts
+        │       ├── EntryVerificationScreen.tsx
+        │       ├── ChiefExaminerDashboard.tsx
+        │       ├── ExamDetailScreen.tsx
+        │       ├── FlaggedCasesScreen.tsx
+        │       ├── ComplianceReportScreen.tsx
+        │       └── ...
         ├── services/
-        │   ├── face-recognition.service.ts  # expo-face-detector wrapper
-        │   ├── offline.service.ts           # SQLite offline cache + sync
-        │   └── socket.service.ts            # Socket.IO client
+        │   ├── socket.service.ts          # Auth-aware reconnect, exam rooms
+        │   └── face-recognition.service.ts
         ├── hooks/
         │   ├── useAuth.ts
         │   ├── useCamera.ts
-        │   └── useLocation.ts
-        └── utils/
-            ├── storage.ts            # expo-secure-store token management
-            ├── permissions.ts        # Camera/location/notification permissions
-            └── helpers.ts            # Date formatting, color helpers, etc.
+        │   ├── useReVerifyTimer.ts        # Re-verification countdown
+        │   └── usePushNotifications.ts
+        └── components/
+            ├── common/                    # Button, Input, ErrorBoundary
+            └── camera/                    # FaceOverlay, ScanResultOverlay
 ```
 
 ---
 
-## 5. Backend Setup & Configuration
+## 5. Backend Setup
 
-### Step 1 — Set up PostgreSQL
+### Step 1 — Database
 
-**Option A — Neon (already configured):**
-The project uses [Neon](https://neon.tech) serverless PostgreSQL. The connection string is already set in `.env` — no local PostgreSQL installation needed. Neon enforces SSL on all connections, which the backend handles automatically.
+**Cloud (recommended):** Create a free [Neon](https://neon.tech) or [Render PostgreSQL](https://render.com) database and copy the connection string.
 
-**Option B — Local PostgreSQL (alternative):**
-
-```bash
-# macOS (Homebrew)
-brew install postgresql@15 && brew services start postgresql@15
-
-# Ubuntu / Debian
-sudo apt install postgresql-15 && sudo systemctl start postgresql
-```
-
-Create the database and user:
+**Local:**
 
 ```bash
 psql -U postgres -c "CREATE DATABASE attendance_db;"
@@ -233,632 +243,594 @@ psql -U postgres -c "CREATE USER attendance_user WITH PASSWORD 'StrongPassword12
 psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE attendance_db TO attendance_user;"
 ```
 
-Then update `DATABASE_URL` in `.env` to:
-```
-DATABASE_URL=postgresql://attendance_user:StrongPassword123@localhost:5432/attendance_db
-```
+### Step 2 — Redis (optional)
 
-### Step 2 — Install Redis
+The backend starts and runs without Redis. When Redis is unavailable it logs a single warning and continues in degraded mode (no token blacklisting, no session cache).
 
 ```bash
 # macOS
-brew install redis
-brew services start redis
+brew install redis && brew services start redis
 
-# Ubuntu / Debian
-sudo apt install redis-server
-sudo systemctl start redis-server
-sudo systemctl enable redis-server
-
-# Windows — use WSL2 or download from:
-# https://github.com/microsoftsoft/redis/releases
+# Ubuntu
+sudo apt install redis-server && sudo systemctl start redis-server
 ```
 
-Verify Redis is running:
-
-```bash
-redis-cli ping
-# Expected output: PONG
-```
-
-### Step 3 — Install backend dependencies
+### Step 3 — Install dependencies
 
 ```bash
 cd backend
 npm install
 ```
 
-### Step 4 — Configure environment variables
+### Step 4 — Configure environment
 
 ```bash
-# Copy the example env file
 cp .env.example .env
 ```
 
-Open `.env` and fill in your values:
+Edit `.env` — minimum required fields:
 
 ```env
 NODE_ENV=development
 PORT=3000
-
-# PostgreSQL — use the credentials from Step 1
 DATABASE_URL=postgresql://attendance_user:StrongPassword123@localhost:5432/attendance_db
-
-# Redis
 REDIS_URL=redis://localhost:6379
-
-# JWT Secrets — generate strong random strings (minimum 32 characters)
-# You can generate them with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-JWT_ACCESS_SECRET=replace_with_64_char_random_hex_string
-JWT_REFRESH_SECRET=replace_with_different_64_char_random_hex_string
-
-JWT_ACCESS_EXPIRES_IN=15m
-JWT_REFRESH_EXPIRES_IN=7d
-
-# Local file storage path (relative to backend/ directory)
-UPLOAD_DIR=./uploads
-MAX_FILE_SIZE=10485760
-
-# CORS — URL of your frontend / mobile dev server
+JWT_ACCESS_SECRET=<64-char hex>
+JWT_REFRESH_SECRET=<different 64-char hex>
 FRONTEND_URL=http://localhost:8081
-
-# Face recognition matching threshold (0.0 - 1.0)
-# 0.75 = require 75% similarity to count as a match
-FACE_SIMILARITY_THRESHOLD=0.75
-
-# AES encryption key — exactly 32 characters
-ENCRYPTION_KEY=replace_with_exactly_32_char_key_!
-
-BCRYPT_SALT_ROUNDS=12
-LOG_LEVEL=info
-LOG_DIR=./logs
+ENCRYPTION_KEY=<exactly 32 characters>
 ```
 
-**Generate secure secrets easily:**
+Generate secrets:
 
 ```bash
-# Run in terminal to get a random JWT secret
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Run this twice — use the first output for `JWT_ACCESS_SECRET` and the second for `JWT_REFRESH_SECRET`.
-
-### Step 5 — Run database migrations
-
-This creates all tables, indexes, and seeds the default super-admin account:
+### Step 5 — Run migrations
 
 ```bash
 npm run migrate
 ```
 
-Expected output:
+This applies all SQL files in `src/migrations/` in filename order, skipping any already recorded in the `schema_migrations` table. Idempotent — safe to run repeatedly.
+
 ```
-✅ Migration 001_init.sql completed successfully
-✅ Default super admin created: admin@school.com
+[APPLY] 001_init.sql ...         [OK]
+[APPLY] 002_seed_test_users.sql  [OK]
+[APPLY] 003_seed_classes.sql     [OK]
+[APPLY] 004_exam_monitoring.sql  [OK]
+[APPLY] 005_seed_exam_data.sql   [OK]
+[APPLY] 006_multi_tenant.sql     [OK]
+[APPLY] 007_fix_admin_password.sql [OK]
+Migration complete. Applied 7 migration(s).
 ```
 
-### Step 6 — Start the backend server
+### Step 6 — Start the server
 
 ```bash
-# Development mode (auto-restarts on file changes)
+# Development (ts-node-dev, auto-restart)
 npm run dev
 
-# Production mode (compile first, then run)
-npm run build
-npm start
+# Production
+npm run build && npm start
 ```
-
-The API will be available at: **http://localhost:3000**
 
 Health check:
 
 ```bash
 curl http://localhost:3000/api/health
-# Expected: { "status": "ok", "timestamp": "..." }
+# { "status": "ok", "timestamp": "..." }
 ```
 
 ---
 
-## 6. Mobile App Setup & Configuration
+## 6. Mobile App Setup
 
-### Step 1 — Install Expo CLI globally
-
-```bash
-npm install -g expo-cli eas-cli
-```
-
-### Step 2 — Install mobile app dependencies
+### Step 1 — Install dependencies
 
 ```bash
 cd mobile
 npm install
 ```
 
-### Step 3 — Configure the API base URL
+### Step 2 — API URL
 
-Open `src/api/client.ts` and update the `BASE_URL` to point to your backend:
+Open `src/api/client.ts` and set `API_BASE_URL`:
 
 ```typescript
-// For physical device on the same network — use your machine's local IP
-const BASE_URL = 'http://192.168.1.100:3000/api';
+// Production (Render.com)
+export const API_BASE_URL = 'https://face-attendance-9kza.onrender.com/api';
 
-// For Android emulator (emulator reaches host at 10.0.2.2)
-const BASE_URL = 'http://10.0.2.2:3000/api';
+// Local — physical device (same Wi-Fi)
+export const API_BASE_URL = 'http://192.168.x.x:3000/api';
 
-// For iOS Simulator (simulator reaches host at localhost)
-const BASE_URL = 'http://localhost:3000/api';
+// Local — Android emulator
+export const API_BASE_URL = 'http://10.0.2.2:3000/api';
 ```
 
-**Finding your machine's local IP:**
+The Socket.IO URL in `src/services/socket.service.ts` must match the same host (without `/api`).
+
+### Step 3 — Start Expo dev server
 
 ```bash
-# macOS / Linux
-ifconfig | grep "inet " | grep -v 127.0.0.1
-
-# Windows
-ipconfig | findstr "IPv4"
-```
-
-### Step 4 — Configure Socket.IO URL
-
-Open `src/services/socket.service.ts` and update the socket URL to match the same host as your API.
-
-### Step 5 — Configure app permissions (already in app.json)
-
-The `app.json` already includes the required permissions:
-- Camera — for face detection during enrollment and attendance scanning
-- Location — for geo-tagging attendance records
-- Notifications — for attendance alerts
-
-### Step 6 — Start the Expo development server
-
-```bash
-cd mobile
 npm start
-# OR
-expo start
 ```
 
-This opens the **Expo Developer Tools** in your browser. You will see a QR code.
+Scan the QR code in Expo Go or press `a` for Android emulator / `i` for iOS simulator.
 
 ---
 
 ## 7. Running the Application
 
-### Option A — Expo Go on Physical Device (Recommended for quick start)
+### Option A — Expo Go on physical device (quickest)
 
-1. Install **Expo Go** from the App Store (iOS) or Google Play (Android)
-2. Make sure your phone and computer are on the **same Wi-Fi network**
-3. Run `npm start` inside the `mobile/` directory
-4. Scan the QR code shown in the terminal with:
-   - iOS: use the Camera app
-   - Android: use the Expo Go app's QR scanner
+1. Install **Expo Go** (App Store / Google Play)
+2. Same Wi-Fi as your dev machine
+3. `cd mobile && npm start` → scan QR
 
-### Option B — Android Emulator
-
-1. Open Android Studio → AVD Manager → Create a virtual device (Pixel 7, API 33+)
-2. Start the emulator
-3. Run:
+### Option B — Android emulator
 
 ```bash
-cd mobile
-npm run android
-# OR
-expo start --android
+cd mobile && npm run android
 ```
 
-### Option C — iOS Simulator (macOS only)
-
-1. Open Xcode → Preferences → Components → Install an iOS simulator
-2. Run:
+### Option C — iOS simulator (macOS only)
 
 ```bash
-cd mobile
-npm run ios
-# OR
-expo start --ios
+cd mobile && npm run ios
 ```
 
-### Option D — Run everything together (backend + mobile)
+### Option D — Full stack locally
 
-Open two terminal windows:
-
-**Terminal 1 — Backend:**
 ```bash
-cd backend
-npm run dev
-```
+# Terminal 1
+cd backend && npm run dev
 
-**Terminal 2 — Mobile:**
-```bash
-cd mobile
-npm start
+# Terminal 2
+cd mobile && npm start
 ```
 
 ---
 
-## 8. Running with Docker
-
-Use Docker Compose to run the backend, PostgreSQL, and Redis together with one command.
-
-### Step 1 — Build and start all services
+## 8. Docker
 
 ```bash
 cd backend
+
+# Build and start backend + PostgreSQL + Redis
 docker-compose up --build
-```
 
-This starts:
-- **app** — Node.js backend on port 3000
-- **postgres** — PostgreSQL on port 5432
-- **redis** — Redis on port 6379
+# Migrations run automatically when the container starts.
+# To run manually inside a running container:
+docker-compose exec app node dist/migrations/migrate.js
 
-### Step 2 — Run migrations inside the container
-
-```bash
-docker-compose exec app npm run migrate
-```
-
-### Step 3 — Stop all services
-
-```bash
+# Stop
 docker-compose down
 
-# To also delete the database volume (full reset):
+# Stop + delete DB data
 docker-compose down -v
 ```
 
-### Docker environment
+The Dockerfile `CMD` runs migrations then starts the server:
 
-The default Docker credentials (from `docker-compose.yml`):
+```
+node dist/migrations/migrate.js && node dist/server.js
+```
 
-| Service | Host | Port | User | Password | Database |
-|---|---|---|---|---|---|
-| PostgreSQL | localhost | 5432 | postgres | password | attendance_db |
-| Redis | localhost | 6379 | — | — | — |
+This means every Render.com deploy automatically applies any pending migrations before traffic is served.
 
-> **For production:** Change the default passwords in `docker-compose.yml` and use Docker secrets or a proper secret manager.
+**Docker defaults:**
+
+| Service | Port | User | Password | DB |
+|---|---|---|---|---|
+| PostgreSQL | 5432 | postgres | password | attendance_db |
+| Redis | 6379 | — | — | — |
+| Backend | 3000 | — | — | — |
 
 ---
 
 ## 9. API Reference
 
-All endpoints are prefixed with `/api`. Protected endpoints require the `Authorization: Bearer <access_token>` header.
+All endpoints require `Authorization: Bearer <access_token>` unless marked **public**.
 
-### Authentication
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| POST | `/auth/login` | No | Login with email + password |
-| POST | `/auth/register` | Admin | Register a new user |
-| POST | `/auth/refresh-token` | No | Get new access token using refresh token |
-| POST | `/auth/logout` | Yes | Invalidate refresh token |
-| POST | `/auth/forgot-password` | No | Send OTP to email |
-| POST | `/auth/reset-password` | No | Reset password with OTP |
-| GET | `/auth/me` | Yes | Get current user profile |
-
-### Face Recognition
+### Authentication — `/api/auth`
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| POST | `/face/register` | Yes | Enroll face (multipart: image + embedding) |
-| GET | `/face/:userId/status` | Yes | Check enrollment status |
-| POST | `/face/verify` | Yes | Verify a face embedding |
-| DELETE | `/face/:userId` | Admin | Delete all face data for a user |
-| POST | `/face/liveness-check` | Yes | Submit liveness verification result |
+| POST | `/auth/login` | public | Email + password → tokens |
+| POST | `/auth/register` | admin+ | Create a new user |
+| POST | `/auth/refresh-token` | public | Rotate access + refresh tokens |
+| POST | `/auth/logout` | yes | Invalidate refresh token |
+| POST | `/auth/forgot-password` | public | Send OTP to email |
+| POST | `/auth/reset-password` | public | Reset password with OTP |
+| GET | `/auth/me` | yes | Current user profile |
 
-### Attendance
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| POST | `/attendance/sessions/start` | Teacher | Start an attendance session |
-| POST | `/attendance/sessions/:id/end` | Teacher | End a session |
-| GET | `/attendance/sessions/:id` | Teacher | Get session details + records |
-| POST | `/attendance/scan` | Teacher | Submit face embedding — returns matched student |
-| POST | `/attendance/mark` | Teacher | Manually mark a student |
-| GET | `/attendance/history` | Student | Get own attendance history |
-| PUT | `/attendance/:id` | Teacher | Override an attendance record |
-| GET | `/attendance/summary/:studentId` | Teacher+ | Get student attendance summary |
-
-### Classes & Users
+### Face — `/api/face`
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| GET | `/classes` | Yes | List all classes |
-| POST | `/classes` | Admin | Create a class |
-| GET | `/classes/:id/students` | Teacher+ | List enrolled students |
-| POST | `/classes/:id/students` | Admin | Enroll a student in a class |
-| GET | `/users` | Admin | List users (paginated, filterable) |
-| PUT | `/users/:id` | Admin | Update user details |
-| POST | `/users/:id/photo` | Yes | Upload profile photo |
+| POST | `/face/register` | yes | Enroll face (multipart: image + optional embedding) |
+| GET | `/face/:userId/status` | yes | Face enrolment status |
+| POST | `/face/verify` | yes | Verify face embedding |
+| DELETE | `/face/:userId` | admin+ | Delete all face data |
 
-### Reports
+### Attendance (Teacher flow) — `/api/attendance`
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| GET | `/reports/daily` | Teacher+ | Daily attendance report |
-| GET | `/reports/monthly` | Teacher+ | Monthly attendance report |
-| GET | `/reports/student/:id` | Teacher+ | Student-specific report |
-| GET | `/reports/defaulters` | Teacher+ | Students below attendance threshold |
-| GET | `/reports/analytics/overview` | Admin | Dashboard statistics |
-| GET | `/reports/export/csv` | Admin | Export data as CSV |
+| POST | `/attendance/sessions/start` | teacher+ | Start attendance session |
+| POST | `/attendance/sessions/:id/end` | teacher+ | End session |
+| GET | `/attendance/sessions/:id` | teacher+ | Session details + records |
+| POST | `/attendance/scan` | teacher+ | Submit face → returns match |
+| POST | `/attendance/mark` | teacher+ | Manual mark |
+| GET | `/attendance/history` | student | Own attendance history |
+| PUT | `/attendance/:id` | teacher+ | Override record |
+
+### Exams — `/api/v2/exams`
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| POST | `/v2/exams` | admin+ | Create exam |
+| GET | `/v2/exams` | any | List exams (filter by status) |
+| GET | `/v2/exams/:examId` | any | Exam detail + halls |
+| PATCH | `/v2/exams/:examId` | admin+ | Update exam |
+| PATCH | `/v2/exams/:examId/status` | chief+ | Transition status |
+| GET | `/v2/exams/:examId/stats` | any | Verified / flagged / rejected counts |
+| GET | `/v2/exams/:examId/alerts` | any | Active alerts |
+| POST | `/v2/exams/:examId/halls` | admin+ | Add hall |
+| GET | `/v2/exams/:examId/halls` | any | List halls |
+| POST | `/v2/exams/:examId/halls/:hallId/enroll` | admin+ | Enrol students (JSON) |
+| POST | `/v2/exams/:examId/halls/:hallId/enroll/csv` | admin+ | Enrol students (CSV upload) |
+| POST | `/v2/exams/:examId/halls/:hallId/session/start` | invigilator+ | Open hall session |
+| POST | `/v2/exams/sessions/:sessionId/end` | invigilator+ | Close hall session |
+| GET | `/v2/exams/sessions/:sessionId/students` | any | Students + latest verdict |
+| PATCH | `/v2/exams/alerts/:alertId/resolve` | chief+ | Resolve alert |
+| PATCH | `/v2/exams/events/:eventId/review` | chief+ | Review flagged event |
+
+### Verification — `/api/v2/verify`
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| POST | `/v2/verify/entry` | invigilator+ | Entry scan — returns verdict |
+| POST | `/v2/verify/re-check` | invigilator+ | Re-verification scan |
+| GET | `/v2/verify/events/:sessionId` | any | All events for a session |
+| GET | `/v2/verify/student/:studentId/exam/:examId` | any | Student history for an exam |
+
+### Reports — `/api/reports`
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/reports/daily` | teacher+ | Daily report |
+| GET | `/reports/monthly` | teacher+ | Monthly report |
+| GET | `/reports/student/:id` | teacher+ | Per-student report |
+| GET | `/reports/defaulters` | teacher+ | Below-threshold students |
+| GET | `/reports/analytics/overview` | admin+ | Dashboard stats |
+| GET | `/v2/exams/:examId/export` | chief+ | Compliance PDF or CSV |
+
+### CSV enrolment format
+
+```csv
+student_email,seat_number,roll_number
+alice@student.com,A-01,2023CS001
+bob@student.com,A-02,2023CS002
+```
+
+`student_email` or `student_id` is required; `seat_number` and `roll_number` are optional.
+
+### Exam status transitions
+
+```
+scheduled ──► active ──► completed
+    │              │
+    └──────────────┴──► cancelled
+```
+
+Invalid transitions (e.g. `completed → active`) return `409 Conflict`.
 
 ---
 
-## 10. Face Recognition Flow
+## 10. Verification Flow
 
-### Student Face Enrollment (done once per student)
-
-```
-Student opens Enrollment Screen
-         │
-         ▼
-Camera activates with oval face guide
-         │
-         ▼
-expo-face-detector detects face in frame
-         │  ← real-time detection loop
-         ▼
-Face quality validated (size, angle, not blurry)
-         │
-         ▼
-Auto-capture triggered (5 photos, different angles)
-Landmark coordinates extracted per capture
-         │
-         ▼
-Each image + landmark embedding sent to backend
-POST /api/face/register (multipart)
-         │
-         ▼
-Backend stores:
-  • Face image file  → backend/uploads/faces/
-  • Embedding vector → face_embeddings table (float8[])
-         │
-         ▼
-Enrollment complete ✓
-```
-
-### Attendance Marking (teacher scans classroom)
+### Entry scan (invigilator taps student → Scan to Verify)
 
 ```
-Teacher starts session → POST /api/attendance/sessions/start
+Invigilator opens Hall Session → taps "Students"
          │
          ▼
-LiveScan screen opens full-screen camera
-         │
-         ▼ ← continuous frame analysis loop
-expo-face-detector detects face bounding boxes
+Selects student from list (shows pending / flagged / verified badge)
          │
          ▼
-For each detected face (debounced — max 1 call/5s per face region):
-  • Capture image frame
-  • Extract face region + landmarks
-  • Build 128-float embedding from landmarks
+EntryVerificationScreen opens camera (front-facing)
          │
          ▼
-POST /api/attendance/scan
-  { sessionId, embedding: number[] }
+Invigilator taps "Scan to Verify"
+  → takePictureAsync (quality 0.7, no base64)
          │
          ▼
-Backend face.service:
-  1. Load all embeddings for students in this class
-  2. Compute cosine similarity against each
-  3. Return best match if similarity > 0.75
+POST /api/v2/verify/entry (multipart)
+  face_image    — JPEG from camera
+  exam_session_id — active session UUID
+  student_id    — selected student UUID
+  scan_type     — "entry"
          │
          ▼
-Result overlaid on camera:
-  ✅ "John Doe — 94% confidence" → Mark PRESENT
-  ❌ "Unknown face"              → No action
+Backend: computeImageEmbedding(file.buffer)  ← sharp centre-crop 16×8 grayscale
+  → cosine similarity vs stored embeddings
+  → verdict:
+      verified     (≥ face_threshold 0.85)
+      flagged      (≥ flag_threshold 0.70)
+      rejected     (< 0.70)
+      proxy_suspect (face matches different enrolled student)
+      no_match      (student has no registered face)
          │
          ▼
-POST /api/attendance/mark → attendance_records table
-Socket.IO event → all connected clients see live update
+Result overlaid on camera (2.6 s animated banner)
+  ✅ VERIFIED  — green
+  ⚠️ FLAGGED   — amber + "Capture ID Card" prompt
+  ❌ REJECTED  — red
+  👤 PROXY SUSPECTED — red + alert escalated to chief examiner
+  ❓ NO FACE DATA — grey + contact admin
+         │
+         ▼
+Socket.IO broadcast → StudentListScreen updates live
+                    → ChiefExaminerDashboard receives alert if flagged/proxy
+```
+
+### Face enrolment (student, done once)
+
+```
+Student opens Face Enrolment screen
+  → Camera activates
+  → Photos captured
+  → POST /api/face/register (multipart: image)
+  → Backend: computeImageEmbedding → stored in face_embeddings (float8[])
 ```
 
 ---
 
-## 11. User Roles & Default Credentials
+## 11. User Roles & Credentials
 
-### All Roles
+### Roles
 
-| Role | Mobile Navigator | Capabilities |
+| Role | Navigator | Capabilities |
 |---|---|---|
-| `super_admin` | Admin tabs | Full system access — manage everything |
-| `admin` | Admin tabs | Manage students, teachers, classes, exams, reports |
-| `chief_examiner` | Exam tabs (5 tabs) | Create exams, live monitoring dashboard, alert review, flag cases |
-| `hall_invigilator` | Invigilator tabs (3 tabs) | Manage assigned hall, scan students at entry, re-verify |
-| `teacher` | Teacher tabs | Start attendance sessions, live face scan, reports |
-| `student` | Student tabs | Enroll face, view own attendance, submit leave requests |
+| `super_admin` | Admin (5 tabs) | Full system access |
+| `admin` | Admin (5 tabs) | Users, classes, exams, reports |
+| `chief_examiner` | Exam (5 tabs) | Create exams, live dashboard, alert review, compliance report |
+| `hall_invigilator` | Invigilator (3 tabs) | Open hall session, scan entry, re-verify |
+| `teacher` | Teacher (4 tabs) | Attendance sessions, live scan, reports |
+| `student` | Student (4 tabs) | Enrol face, attendance history, leave requests |
 
----
+### All test accounts (after `npm run migrate`)
 
-### All Test Accounts (after running `npm run migrate`)
-
-> All seeded accounts use password: **`password123`**  
-> Super Admin uses password: **`Admin@123`**
-
-#### System Accounts
-
-| Role | Name | Email | Password | Notes |
+| # | Role | Email | Password | Assignment |
 |---|---|---|---|---|
-| `super_admin` | Super Admin | `admin@school.com` | `Admin@123` | Created by `001_init.sql` — change on first login |
-| `admin` | Test Admin | `admin@test.com` | `password123` | Created by `002_seed_test_users.sql` |
-| `teacher` | Test Teacher | `teacher@test.com` | `password123` | Assigned to CS-A and IT-B classes |
-| `student` | Test Student | `student@test.com` | `password123` | Enrolled in Hall B (Seat B-03) of CS-FINAL-2026 |
+| 1 | `super_admin` | `admin@school.com` | `Admin@123` | Full access |
+| 2 | `admin` | `admin@test.com` | `password123` | Full access |
+| 3 | `teacher` | `teacher@test.com` | `password123` | CS-A and IT-B |
+| 4 | `student` | `student@test.com` | `password123` | Hall B · Seat B-03 |
+| 5 | `chief_examiner` | `chief@exam.com` | `password123` | CS-FINAL-2026 |
+| 6 | `hall_invigilator` | `invig.a@exam.com` | `password123` | Hall A · Ground Floor |
+| 7 | `hall_invigilator` | `invig.b@exam.com` | `password123` | Hall B · First Floor |
+| 8 | `student` | `alice@student.com` | `password123` | Hall A · Seat A-01 |
+| 9 | `student` | `bob@student.com` | `password123` | Hall A · Seat A-02 |
+| 10 | `student` | `carol@student.com` | `password123` | Hall A · Seat A-03 |
+| 11 | `student` | `david@student.com` | `password123` | Hall B · Seat B-01 |
+| 12 | `student` | `eva@student.com` | `password123` | Hall B · Seat B-02 |
 
-#### Exam Monitoring Accounts (created by `005_seed_exam_data.sql`)
+> **Note:** Students must enrol their face via the Face ID tab before entry verification will produce a meaningful verdict.
 
-| Role | Name | Email | Password | Assignment |
-|---|---|---|---|---|
-| `chief_examiner` | Chief Examiner | `chief@exam.com` | `password123` | Oversees CS-FINAL-2026 |
-| `hall_invigilator` | Hall Invigilator A | `invig.a@exam.com` | `password123` | Hall A — Main Block, Ground Floor |
-| `hall_invigilator` | Hall Invigilator B | `invig.b@exam.com` | `password123` | Hall B — Main Block, First Floor |
-| `student` | Alice Johnson | `alice@student.com` | `password123` | Hall A, Seat A-01 |
-| `student` | Bob Smith | `bob@student.com` | `password123` | Hall A, Seat A-02 |
-| `student` | Carol White | `carol@student.com` | `password123` | Hall A, Seat A-03 |
-| `student` | David Brown | `david@student.com` | `password123` | Hall B, Seat B-01 |
-| `student` | Eva Green | `eva@student.com` | `password123` | Hall B, Seat B-02 |
-
-#### Quick Login Reference for Mobile App Testing
+### Quick login reference
 
 ```
-── Attendance System ─────────────────────────────────────
-Admin panel:        admin@school.com    / Admin@123
-Teacher dashboard:  teacher@test.com    / password123
-Student view:       student@test.com    / password123
+── Admin / System ────────────────────────────────────
+Super Admin:       admin@school.com    / Admin@123
+Admin:             admin@test.com      / password123
+Teacher:           teacher@test.com    / password123
+Student:           student@test.com    / password123
 
-── Exam Monitoring ───────────────────────────────────────
-Chief Examiner:     chief@exam.com      / password123
-Invigilator (A):    invig.a@exam.com    / password123
-Invigilator (B):    invig.b@exam.com    / password123
-Exam student:       alice@student.com   / password123
+── Exam Monitoring ───────────────────────────────────
+Chief Examiner:    chief@exam.com      / password123
+Invigilator A:     invig.a@exam.com    / password123
+Invigilator B:     invig.b@exam.com    / password123
+Exam student:      alice@student.com   / password123
 ```
 
-#### Seeded Exam: CS-FINAL-2026
+### Seeded exam: CS-FINAL-2026
 
 | Field | Value |
 |---|---|
-| Title | Computer Science Final Examination 2026 |
 | Exam Code | `CS-FINAL-2026` |
-| Date | 2026-06-15, 09:00 – 12:00 (3 hours) |
-| Status | `scheduled` (start via ExamDetail screen) |
-| Face Threshold | 0.85 (verified) |
-| Flag Threshold | 0.70 (flagged → manual review) |
-| Hall A | 3 students: Alice, Bob, Carol (Invigilator A) |
-| Hall B | 3 students: David, Eva, Test Student (Invigilator B) |
+| Title | Computer Science Final Examination 2026 |
+| Date | 2026-06-15 · 09:00 – 12:00 (180 min) |
+| Status | `scheduled` (activate via ExamDetail → Start Exam) |
+| Face threshold | 0.85 → verified |
+| Flag threshold | 0.70 → flagged |
+| Hall A | Alice, Bob, Carol (Invigilator A) |
+| Hall B | David, Eva, Test Student (Invigilator B) |
 
-> **Note:** Students must enroll their face via the Face ID tab before  
-> verification will work. Use `POST /api/face/register` with a face image.
-
----
-
-### Creating Additional Users
-
-After logging in as admin, use the Register API:
+### Creating additional users
 
 ```bash
-curl -X POST http://localhost:3030/api/auth/register \
-  -H "Authorization: Bearer <your_access_token>" \
+curl -X POST https://face-attendance-9kza.onrender.com/api/auth/register \
+  -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "New Teacher",
-    "email": "newteacher@school.com",
-    "password": "SecurePass123",
-    "role": "teacher"
+    "name": "New Invigilator",
+    "email": "new@exam.com",
+    "password": "SecurePass@123",
+    "role": "hall_invigilator"
   }'
 ```
 
-Valid roles: `super_admin`, `admin`, `chief_examiner`, `hall_invigilator`, `teacher`, `student`
+Valid roles: `super_admin` `admin` `chief_examiner` `hall_invigilator` `teacher` `student`
 
 ---
 
-## 12. Environment Variables Reference
+## 12. Environment Variables
 
 ### Backend (`backend/.env`)
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `NODE_ENV` | Yes | `development` | `development` or `production` |
-| `PORT` | No | `3000` | HTTP server port |
-| `DATABASE_URL` | Yes | — | Full PostgreSQL connection string |
-| `REDIS_URL` | Yes | — | Redis connection URL |
-| `JWT_ACCESS_SECRET` | Yes | — | Secret for signing access tokens (min 32 chars) |
-| `JWT_REFRESH_SECRET` | Yes | — | Secret for signing refresh tokens (min 32 chars) |
-| `JWT_ACCESS_EXPIRES_IN` | No | `15m` | Access token TTL |
-| `JWT_REFRESH_EXPIRES_IN` | No | `7d` | Refresh token TTL |
-| `UPLOAD_DIR` | No | `./uploads` | Local file storage root directory |
-| `MAX_FILE_SIZE` | No | `10485760` | Max upload size in bytes (default: 10 MB) |
-| `FRONTEND_URL` | Yes | — | Allowed CORS origin (mobile app URL) |
-| `FACE_SIMILARITY_THRESHOLD` | No | `0.75` | Min cosine similarity to count as face match |
-| `ENCRYPTION_KEY` | Yes | — | AES-256 key — must be exactly 32 characters |
-| `BCRYPT_SALT_ROUNDS` | No | `12` | bcrypt cost factor |
-| `LOG_LEVEL` | No | `info` | `error`, `warn`, `info`, `debug` |
-| `LOG_DIR` | No | `./logs` | Log file output directory |
-| `RATE_LIMIT_WINDOW_MS` | No | `900000` | Rate limit window (15 min in ms) |
-| `RATE_LIMIT_MAX` | No | `100` | Max requests per window (general) |
-| `AUTH_RATE_LIMIT_MAX` | No | `10` | Max requests per window (auth endpoints) |
+| `NODE_ENV` | yes | `development` | `development` or `production` |
+| `PORT` | no | `3000` | HTTP port |
+| `DATABASE_URL` | yes | — | PostgreSQL connection string |
+| `REDIS_URL` | no | — | Redis URL — app runs without it |
+| `JWT_ACCESS_SECRET` | yes | — | Min 32 chars |
+| `JWT_REFRESH_SECRET` | yes | — | Min 32 chars, different from access |
+| `JWT_ACCESS_EXPIRES_IN` | no | `15m` | Access token TTL |
+| `JWT_REFRESH_EXPIRES_IN` | no | `7d` | Refresh token TTL |
+| `FRONTEND_URL` | yes | — | CORS origin (comma-separated for multiple) |
+| `ENCRYPTION_KEY` | yes | — | Exactly 32 characters |
+| `BCRYPT_SALT_ROUNDS` | no | `12` | bcrypt cost factor |
+| `FACE_SIMILARITY_THRESHOLD` | no | `0.75` | Min cosine similarity for face match |
+| `UPLOAD_DIR` | no | `./uploads` | Local file storage root |
+| `MAX_FILE_SIZE` | no | `10485760` | Upload limit in bytes (10 MB) |
+| `CLOUDINARY_CLOUD_NAME` | no | — | Cloudinary upload (falls back to local) |
+| `CLOUDINARY_API_KEY` | no | — | Cloudinary API key |
+| `CLOUDINARY_API_SECRET` | no | — | Cloudinary API secret |
+| `LOG_LEVEL` | no | `info` | `error` `warn` `info` `debug` |
+| `RATE_LIMIT_MAX` | no | `100` | Max requests per 15-min window |
+| `AUTH_RATE_LIMIT_MAX` | no | `10` | Max auth requests per 15-min window |
 
 ### Mobile (`mobile/src/api/client.ts`)
 
-These are hardcoded constants (not a `.env` file since Expo managed workflow doesn't support `.env` natively without extra config):
+The mobile app does not use a `.env` file. Configuration is in source:
 
-| Constant | Location | Description |
+| Constant | File | Description |
 |---|---|---|
-| `BASE_URL` | `src/api/client.ts` | Backend API base URL |
-| Socket URL | `src/services/socket.service.ts` | Socket.IO server URL |
+| `API_BASE_URL` | `src/api/client.ts` | Backend REST API base URL |
+| `SOCKET_URL` | `src/services/socket.service.ts` | Socket.IO server URL |
 
 ---
 
-## 13. Troubleshooting
+## 13. EAS Build (Android / iOS)
 
-### Backend won't start — "Cannot connect to database"
+The mobile app uses [Expo Application Services](https://expo.dev/eas) for cloud builds.
+
+**EAS project:** `face-attend` (slug in `app.json` must match)
+**Project ID:** `6eccf9b2-305f-467a-9819-39df98ea0d8b`
+
+### Login to EAS
 
 ```bash
-# Verify PostgreSQL is running
+eas login
+```
+
+### Build profiles (`eas.json`)
+
+| Profile | Distribution | Use case |
+|---|---|---|
+| `development` | internal | Dev client with hot reload |
+| `preview` | internal | APK for internal testers (no store submission) |
+| `production` | store | Play Store / App Store submission |
+
+### Build commands
+
+```bash
+cd mobile
+
+# Android APK (preview — share directly)
+eas build -p android --profile preview
+
+# Android AAB (production — Play Store)
+eas build -p android --profile production
+
+# iOS (production — App Store)
+eas build -p ios --profile production
+
+# Reconfigure EAS (if slug/projectId mismatch)
+eas build:configure
+```
+
+### App identifiers
+
+| Platform | Identifier |
+|---|---|
+| Android package | `com.examguard.secure` |
+| iOS bundle ID | `com.examguard.secure` |
+| App version | `2.0.0` |
+
+---
+
+## 14. Troubleshooting
+
+### Backend won't connect to database
+
+```bash
 pg_isready -h localhost -p 5432
-
-# Check your DATABASE_URL in .env matches the actual credentials
-psql postgresql://attendance_user:StrongPassword123@localhost:5432/attendance_db -c "\l"
+# Check DATABASE_URL in .env
 ```
 
-### Backend won't start — "Redis connection refused"
+### Redis connection refused at startup
+
+This is non-fatal. The backend logs a single warning and continues without Redis. If you need Redis:
 
 ```bash
-# Check Redis is running
+# macOS
+brew services start redis
+
+# Linux
+sudo systemctl start redis-server
+
 redis-cli ping   # Expected: PONG
-
-# If not running:
-# macOS:  brew services start redis
-# Linux:  sudo systemctl start redis-server
 ```
 
-### Migration fails — "permission denied"
+### Migrations fail — permission denied
 
 ```bash
-# Grant all permissions to your database user
 psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE attendance_db TO attendance_user;"
 psql -U postgres -d attendance_db -c "GRANT ALL ON SCHEMA public TO attendance_user;"
 ```
 
-### Mobile app can't reach the backend
+### Admin login fails (`admin@school.com`)
 
-1. Confirm backend is running: `curl http://localhost:3000/api/health`
-2. If using Expo Go on a physical device, use your machine's **local network IP** (not `localhost`)
-3. Ensure your firewall allows connections on port 3000
-4. Android emulator: use `http://10.0.2.2:3000/api` (emulator's alias for host machine)
+The correct password is `Admin@123`. Migration `007_fix_admin_password.sql` ensures the correct bcrypt hash is in the database. If you're running locally, re-run migrations:
+
+```bash
+cd backend && npm run migrate
+```
+
+### Socket "Authentication failed" warning in mobile logs
+
+This warning fires when the backend's Redis is temporarily unavailable during socket handshake. The socket service will wait up to 6 seconds for a REST token refresh, then reconnect automatically. The fix (using `safeGet` instead of direct `redisClient.get`) is in `backend/src/sockets/attendance.socket.ts` — Redis unavailability no longer blocks socket authentication.
+
+### `student_id must be a valid UUID` (400 on scan)
+
+validator.js v13 enforces RFC 4122 variant bits — test-fixture UUIDs like `44444444-4444-4444-4444-444444444444` fail its check even though PostgreSQL stores them fine. The backend now uses a PostgreSQL-compatible UUID regex (`backend/src/utils/uuid.validator.ts`) that accepts any 8-4-4-4-12 hex UUID. Ensure the latest backend is deployed.
+
+### EAS build — slug mismatch error
+
+```
+Slug for project identified by "extra.eas.projectId" (face-attend) does not match
+the "slug" field (examguard).
+```
+
+Ensure `app.json` has `"slug": "face-attend"`. The EAS project was registered under `face-attend`; the display name ("ExamGuard") is independent.
+
+### Mobile can't reach backend
+
+1. Verify backend: `curl http://localhost:3000/api/health`
+2. Physical device: use your machine's LAN IP (`ifconfig` / `ipconfig`), not `localhost`
+3. Android emulator: use `http://10.0.2.2:3000/api`
+4. Check firewall allows port 3000
 
 ### Camera not working in Expo Go
 
-Expo Go supports `expo-camera` on physical devices. Simulators/emulators have limited camera support. Test face features on a real device.
+`expo-camera` requires a physical device for face capture. Emulators and simulators have no real camera — test verification on a real device.
 
-### Face enrollment fails — "No face detected"
+### "No face detected" during enrolment
 
-- Ensure lighting is adequate (not too dark, no harsh backlight)
+- Good lighting, no harsh backlight
 - Hold device 40–70 cm from face
-- Face should occupy at least 40% of the oval guide area
-- Remove sunglasses or heavy accessories
+- Face should fill the oval guide (≥ 40% of frame)
+- Remove sunglasses or face coverings
 
-### TypeScript errors in mobile tsconfig.json
+### JWT expired errors
 
-If you see `File 'expo/tsconfig.base' not found`, it means `node_modules` haven't been installed yet. Run:
-
-```bash
-cd mobile && npm install
-```
-
-The error disappears once the `expo` package is installed.
-
-### JWT token expired errors
-
-Access tokens expire after 15 minutes by design. The mobile app auto-refreshes them using the stored refresh token. If you see persistent auth errors, clear the app's secure storage and log in again.
-
-### Uploads directory not created
-
-The backend creates upload directories on startup. If they're missing:
-
-```bash
-mkdir -p backend/uploads/photos backend/uploads/faces backend/uploads/attendance backend/logs
-```
+Access tokens expire after 15 minutes. The Axios interceptor auto-refreshes them transparently. If you still see auth errors, clear Secure Storage and log in again.
 
 ---
 
@@ -869,23 +841,30 @@ mkdir -p backend/uploads/photos backend/uploads/faces backend/uploads/attendance
 cd backend
 npm install              # Install dependencies
 cp .env.example .env     # Configure environment
-npm run migrate          # Create DB tables + seed admin
-npm run dev              # Start dev server (port 3000)
-npm run build            # Compile TypeScript
+npm run migrate          # Create tables + seed all accounts
+npm run dev              # Dev server (port 3000, auto-restart)
+npm run build            # Compile TypeScript → dist/
 npm start                # Run compiled production build
-npm run typecheck        # Check types without building
+npm test                 # Run 223 Jest tests
+npm run typecheck        # Type-check without building
 
 # ── Mobile ───────────────────────────────────────────────
 cd mobile
 npm install              # Install dependencies
-npm start                # Start Expo dev server
-npm run android          # Open on Android emulator
-npm run ios              # Open on iOS simulator (macOS only)
+npm start                # Expo dev server
+npm run android          # Android emulator
+npm run ios              # iOS simulator (macOS only)
+
+# ── EAS Cloud Builds ─────────────────────────────────────
+cd mobile
+eas login                        # Log in to Expo account
+eas build -p android --profile preview     # Internal APK
+eas build -p android --profile production  # Play Store AAB
+eas build -p ios --profile production      # App Store IPA
 
 # ── Docker (backend + DB + Redis) ────────────────────────
 cd backend
-docker-compose up --build                # Start everything
-docker-compose exec app npm run migrate  # Run migrations
-docker-compose down                      # Stop
-docker-compose down -v                   # Stop + delete DB data
+docker-compose up --build        # Build and start all services
+docker-compose down              # Stop
+docker-compose down -v           # Stop + delete all data
 ```
