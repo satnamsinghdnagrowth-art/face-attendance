@@ -12,9 +12,14 @@ import logger from '../utils/logger';
 // ─── Validators ───────────────────────────────────────────────────────────────
 
 export const entryVerifyValidators = [
-  body('exam_session_id').notEmpty().isUUID().withMessage('Valid exam_session_id is required'),
-  body('student_id').notEmpty().isUUID().withMessage('Valid student_id is required'),
-  body('embedding').notEmpty().withMessage('Face embedding is required'),
+  body('exam_session_id')
+    .notEmpty().withMessage('exam_session_id is required — start a hall session first')
+    .isUUID().withMessage('exam_session_id must be a valid UUID'),
+  body('student_id')
+    .notEmpty().withMessage('student_id is required — select a student from the list before scanning')
+    .isUUID().withMessage('student_id must be a valid UUID'),
+  body('embedding')
+    .notEmpty().withMessage('Face embedding is required'),
   body('scan_type')
     .optional()
     .isIn(['entry', 're_verify', 'manual'])
@@ -22,9 +27,14 @@ export const entryVerifyValidators = [
 ];
 
 export const reVerifyValidators = [
-  body('exam_session_id').notEmpty().isUUID().withMessage('Valid exam_session_id is required'),
-  body('student_id').notEmpty().isUUID().withMessage('Valid student_id is required'),
-  body('embedding').notEmpty().withMessage('Face embedding is required'),
+  body('exam_session_id')
+    .notEmpty().withMessage('exam_session_id is required')
+    .isUUID().withMessage('exam_session_id must be a valid UUID'),
+  body('student_id')
+    .notEmpty().withMessage('student_id is required')
+    .isUUID().withMessage('student_id must be a valid UUID'),
+  body('embedding')
+    .notEmpty().withMessage('Face embedding is required'),
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
