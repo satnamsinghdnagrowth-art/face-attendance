@@ -1,5 +1,6 @@
 import { query, withTransaction } from '../config/database';
 import { CustomError, NotFoundError } from '../middleware/error.middleware';
+import { notificationService } from './notification.service';
 import logger from '../utils/logger';
 import { PoolClient } from 'pg';
 
@@ -440,6 +441,23 @@ export class ExamService {
     hallId: string,
     invigilatorId: string
   ): Promise<ExamSession> {
+    // Validate params — surface clear errors to the mobile client
+    if (!examId || !hallId || !invigilatorId) {
+      throw new CustomError('examId, hallId, and invigilatorId are all required', 400);
+    }
+
+    // Verify the hall exists and belongs to this exam
+    const hallCheck = await query<{ id: string; exam_id: string }>(
+      'SELECT id, exam_id FROM exam_halls WHERE id = $1',
+      [hallId]
+    );
+    if (hallCheck.rows.length === 0) {
+      throw new NotFoundError(`Hall ${hallId} not found`);
+    }
+    if (hallCheck.rows[0].exam_id !== examId) {
+      throw new CustomError('Hall does not belong to the specified exam', 400);
+    }
+
     // Check for existing active session in this hall
     const activeResult = await query<{ id: string }>(
       `SELECT id FROM exam_sessions
@@ -447,7 +465,7 @@ export class ExamService {
       [hallId]
     );
     if (activeResult.rows.length > 0) {
-      throw new CustomError('An active session already exists for this hall', 409);
+      throw new CustomError('A session is already active for this hall. End it first before starting a new one.', 409);
     }
 
     // Get enrolled student count for this hall
@@ -465,13 +483,24 @@ export class ExamService {
       [examId, hallId, invigilatorId, totalStudents]
     );
 
-    logger.info('Exam session started', {
-      sessionId: result.rows[0].id,
-      examId,
-      hallId,
-      invigilatorId,
-    });
-    return result.rows[0];
+    const session = result.rows[0];
+    logger.info('Exam session started', { sessionId: session.id, examId, hallId, invigilatorId });
+
+    // Broadcast hall-session start to exam room (updates ChiefExaminerDashboard)
+    try {
+      const hallRow = await query<{ hall_name: string }>(
+        'SELECT hall_name FROM exam_halls WHERE id = $1',
+        [hallId]
+      );
+      notificationService.broadcastHallSessionUpdate(examId, {
+        hallId,
+        sessionId: session.id,
+        event: 'started',
+        hallName: hallRow.rows[0]?.hall_name,
+      });
+    } catch { /* non-fatal */ }
+
+    return session;
   }
 
   // 10. End a hall session and create no-show alerts
@@ -621,6 +650,53 @@ export class ExamService {
     const no_show = parseInt(noShowResult.rows[0]?.cnt ?? '0', 10);
 
     return { total_enrolled, verified, flagged, rejected, no_show, proxy_suspects };
+  }
+
+  // 13. Update exam status with transition validation
+  //
+  // Allowed transitions:
+  //   scheduled → active      (admin/chief_examiner manually starts exam)
+  //   scheduled → cancelled   (admin cancels before it begins)
+  //   active    → completed   (admin closes exam, or auto-close at scheduled_end)
+  //   active    → cancelled   (emergency cancellation)
+  async updateExamStatus(
+    examId: string,
+    newStatus: 'active' | 'completed' | 'cancelled',
+    changedBy: string
+  ): Promise<Exam> {
+    const examRow = await query<{ id: string; status: string; exam_code: string; title: string }>(
+      'SELECT id, status, exam_code, title FROM exams WHERE id = $1',
+      [examId]
+    );
+    if (examRow.rows.length === 0) throw new NotFoundError('Exam');
+
+    const { status: current, exam_code, title } = examRow.rows[0];
+
+    const ALLOWED: Record<string, string[]> = {
+      scheduled: ['active', 'cancelled'],
+      active:    ['completed', 'cancelled'],
+      completed: [],
+      cancelled: [],
+    };
+
+    if (!(ALLOWED[current] ?? []).includes(newStatus)) {
+      throw new CustomError(
+        `Cannot transition exam from '${current}' to '${newStatus}'`,
+        409
+      );
+    }
+
+    const result = await query<Exam>(
+      `UPDATE exams SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [newStatus, examId]
+    );
+
+    logger.info('Exam status updated', { examId, from: current, to: newStatus, changedBy });
+
+    // Broadcast status change to everyone in the exam room
+    notificationService.broadcastExamStatusChange(examId, newStatus, exam_code);
+
+    return result.rows[0];
   }
 }
 

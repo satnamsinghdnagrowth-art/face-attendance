@@ -1,6 +1,6 @@
 import { Server, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
-import { JWTPayload, UserRole } from '../types';
+import { JWTPayload } from '../types';
 import env from '../config/env';
 import logger from '../utils/logger';
 import { redisClient } from '../config/redis';
@@ -23,7 +23,6 @@ const authenticateSocket = async (
       return;
     }
 
-    // Check if token is blacklisted
     const isBlacklisted = await redisClient.get(`blacklist:${token}`);
     if (isBlacklisted) {
       next(new Error('Token has been revoked'));
@@ -45,7 +44,6 @@ const authenticateSocket = async (
 };
 
 export const initializeSockets = (io: Server): void => {
-  // Apply JWT authentication middleware to all socket connections
   io.use((socket, next) => {
     authenticateSocket(socket as AuthenticatedSocket, next);
   });
@@ -65,42 +63,35 @@ export const initializeSockets = (io: Server): void => {
       role: user.role,
     });
 
-    // Auto-join personal room
+    // Auto-join personal and role rooms on connect
     socket.join(`user:${user.userId}`);
-
-    // Auto-join role room
     socket.join(`role:${user.role}`);
 
-    // ─── Event Handlers ─────────────────────────────────────────────────────
+    // ─── Attendance (Class / Session) Rooms ────────────────────────────────
 
     const joinClassRoom = async (classId: string) => {
       const room = `class:${classId}`;
       await socket.join(room);
-      const roomSize = io.sockets.adapter.rooms.get(room)?.size || 0;
-      socket.emit('joined_class_room', { class_id: classId, room, participant_count: roomSize });
+      const size = io.sockets.adapter.rooms.get(room)?.size ?? 0;
+      socket.emit('joined_class_room', { class_id: classId, room, participant_count: size });
       logger.debug('Socket joined class room', { socketId: socket.id, userId: user.userId, classId });
     };
 
-    // Mobile emits: join_class with { class_id }
     socket.on('join_class', async (data: { class_id: string }) => {
       if (!data?.class_id) { socket.emit('error', { message: 'class_id is required' }); return; }
       await joinClassRoom(data.class_id);
     });
 
-    // Legacy event name support
     socket.on('join-class-room', async (data: { classId?: string; class_id?: string }) => {
       const classId = data?.classId || data?.class_id;
       if (!classId) { socket.emit('error', { message: 'classId is required' }); return; }
       await joinClassRoom(classId);
     });
 
-    // Mobile emits: leave_class with { class_id }
     socket.on('leave_class', async (data: { class_id: string }) => {
       if (!data?.class_id) return;
-      const room = `class:${data.class_id}`;
-      await socket.leave(room);
+      await socket.leave(`class:${data.class_id}`);
       socket.emit('left_class_room', { class_id: data.class_id });
-      logger.debug('Socket left class room', { socketId: socket.id, userId: user.userId, classId: data.class_id });
     });
 
     socket.on('leave-class-room', async (data: { classId?: string; class_id?: string }) => {
@@ -109,31 +100,102 @@ export const initializeSockets = (io: Server): void => {
       await socket.leave(`class:${classId}`);
     });
 
-    // Mobile emits: join_session with { session_id }
     socket.on('join_session', async (data: { session_id: string }) => {
       if (!data?.session_id) return;
-      const room = `session:${data.session_id}`;
-      await socket.join(room);
+      await socket.join(`session:${data.session_id}`);
       socket.emit('joined_session', { session_id: data.session_id });
     });
 
-    // Mobile emits: leave_session with { session_id }
     socket.on('leave_session', async (data: { session_id: string }) => {
       if (!data?.session_id) return;
       await socket.leave(`session:${data.session_id}`);
     });
 
+    // ─── Exam Monitoring Rooms ──────────────────────────────────────────────
+    //
+    // Room naming:
+    //   exam:{examId}      — chief examiners + any authenticated user of this exam
+    //   exam_hall:{hallId} — invigilators of a specific hall (subset of exam room)
+    //
+    // Who joins:
+    //   chief_examiner → joins exam:{examId} to receive all alerts + verdicts
+    //   hall_invigilator → joins exam:{examId} AND exam_hall:{hallId} for their hall
+
     /**
-     * Request current session state for a class room.
-     * Event: get-session-state
-     * Payload: { sessionId: string }
+     * join_exam_room — joins the top-level exam room.
+     * Payload: { exam_id: string }
+     * Used by: chief_examiner to receive all alerts and verification events for the exam.
      */
+    socket.on('join_exam_room', async (data: { exam_id: string }) => {
+      if (!data?.exam_id) {
+        socket.emit('error', { message: 'exam_id is required' });
+        return;
+      }
+      const room = `exam:${data.exam_id}`;
+      await socket.join(room);
+      const size = io.sockets.adapter.rooms.get(room)?.size ?? 0;
+      socket.emit('joined_exam_room', { exam_id: data.exam_id, participant_count: size });
+      logger.debug('Socket joined exam room', { socketId: socket.id, userId: user.userId, examId: data.exam_id });
+    });
+
+    /**
+     * leave_exam_room — leaves the exam room.
+     * Payload: { exam_id: string }
+     */
+    socket.on('leave_exam_room', async (data: { exam_id: string }) => {
+      if (!data?.exam_id) return;
+      await socket.leave(`exam:${data.exam_id}`);
+      socket.emit('left_exam_room', { exam_id: data.exam_id });
+    });
+
+    /**
+     * join_exam_hall — joins the hall-specific sub-room within an exam.
+     * Payload: { exam_id: string; hall_id: string }
+     * Used by: hall_invigilator to receive verdicts from their hall only.
+     * Also auto-joins the parent exam:{examId} room so alerts are received.
+     */
+    socket.on('join_exam_hall', async (data: { exam_id: string; hall_id: string }) => {
+      if (!data?.exam_id || !data?.hall_id) {
+        socket.emit('error', { message: 'exam_id and hall_id are required' });
+        return;
+      }
+      // Join both the exam-level room and the hall-specific room
+      const examRoom = `exam:${data.exam_id}`;
+      const hallRoom = `exam_hall:${data.hall_id}`;
+      await Promise.all([socket.join(examRoom), socket.join(hallRoom)]);
+      socket.emit('joined_exam_hall', {
+        exam_id: data.exam_id,
+        hall_id: data.hall_id,
+        exam_room: examRoom,
+        hall_room: hallRoom,
+      });
+      logger.debug('Socket joined exam hall room', {
+        socketId: socket.id,
+        userId: user.userId,
+        examId: data.exam_id,
+        hallId: data.hall_id,
+      });
+    });
+
+    /**
+     * leave_exam_hall — leaves the hall-specific room.
+     * Payload: { exam_id: string; hall_id: string }
+     */
+    socket.on('leave_exam_hall', async (data: { exam_id: string; hall_id: string }) => {
+      if (!data?.exam_id || !data?.hall_id) return;
+      await Promise.all([
+        socket.leave(`exam:${data.exam_id}`),
+        socket.leave(`exam_hall:${data.hall_id}`),
+      ]);
+    });
+
+    // ─── Session state query ────────────────────────────────────────────────
+
     socket.on('get-session-state', async (data: { sessionId: string }) => {
       if (!data?.sessionId) {
         socket.emit('error', { message: 'sessionId is required' });
         return;
       }
-
       try {
         const { query } = await import('../config/database');
         const result = await query(
@@ -144,43 +206,32 @@ export const initializeSockets = (io: Server): void => {
            GROUP BY as2.id`,
           [data.sessionId]
         );
-
         socket.emit('session-state', result.rows[0] || null);
-      } catch (error) {
+      } catch {
         socket.emit('error', { message: 'Failed to fetch session state' });
       }
     });
 
-    /**
-     * Ping/pong for connection health check.
-     * Event: ping
-     */
+    // ─── Ping/pong health check ─────────────────────────────────────────────
+
     socket.on('ping', () => {
       socket.emit('pong', { timestamp: new Date().toISOString() });
     });
 
-    // ─── Disconnect ──────────────────────────────────────────────────────────
+    // ─── Disconnect ─────────────────────────────────────────────────────────
+
     socket.on('disconnect', (reason: string) => {
-      logger.info('Socket disconnected', {
-        socketId: socket.id,
-        userId: user.userId,
-        reason,
-      });
+      logger.info('Socket disconnected', { socketId: socket.id, userId: user.userId, reason });
     });
 
     socket.on('error', (error: Error) => {
-      logger.error('Socket error', {
-        socketId: socket.id,
-        userId: user.userId,
-        error: error.message,
-      });
+      logger.error('Socket error', { socketId: socket.id, userId: user.userId, error: error.message });
     });
   });
 
-  // Connection error handler
   io.on('connect_error', (error: Error) => {
     logger.error('Socket.IO connection error', { error: error.message });
   });
 
-  logger.info('Socket.IO initialized with attendance handlers');
+  logger.info('Socket.IO initialized with attendance + exam monitoring handlers');
 };

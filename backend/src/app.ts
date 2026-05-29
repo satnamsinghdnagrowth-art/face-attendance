@@ -126,6 +126,37 @@ const createApp = (): Application => {
   app.use('/api/v2/exams', examRoutes);
   app.use('/api/v2/verify', verificationRoutes);
 
+  // ─── Migration status check (helps diagnose "table does not exist" errors) ──
+  app.get('/api/v2/status', async (_req, res) => {
+    try {
+      const { query: dbQuery } = await import('./config/database');
+      const tables = await dbQuery<{ tablename: string }>(
+        `SELECT tablename FROM pg_tables
+         WHERE schemaname = 'public'
+           AND tablename IN (
+             'exams','exam_halls','exam_sessions',
+             'exam_enrollments','verification_events','exam_alerts',
+             'push_tokens','institutions'
+           )
+         ORDER BY tablename`,
+        []
+      );
+      const found = tables.rows.map((r) => r.tablename);
+      const required = ['exams','exam_halls','exam_sessions','exam_enrollments','verification_events','exam_alerts'];
+      const missing = required.filter((t) => !found.includes(t));
+      res.json({
+        migrated: missing.length === 0,
+        tables_found: found,
+        tables_missing: missing,
+        message: missing.length === 0
+          ? 'All exam monitoring tables present ✓'
+          : `Missing tables: ${missing.join(', ')} — run: npm run migrate`,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ─── 404 Handler ─────────────────────────────────────────────────────────
   app.use(notFoundHandler);
 

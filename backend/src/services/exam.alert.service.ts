@@ -1,5 +1,6 @@
 import { query } from '../config/database';
 import { notificationService } from './notification.service';
+import { pushNotificationService } from './push.notification.service';
 import { VerificationResult } from './verification.service';
 import logger from '../utils/logger';
 
@@ -63,26 +64,29 @@ export class ExamAlertService {
 
     const alertId = result.rows[0].id;
 
-    // Broadcast to the exam room via the existing broadcastSystemAlert mechanism.
-    // We target the room `exam:<examId>` by emitting a named event through
-    // notificationService which wraps the Socket.IO instance.
-    notificationService.broadcastSystemAlert(
-      JSON.stringify({
-        event: 'exam_alert',
-        room: `exam:${params.exam_id}`,
-        alert: {
-          id: alertId,
-          exam_id: params.exam_id,
-          hall_id: params.hall_id,
-          event_id: params.event_id,
-          student_id: params.student_id,
-          alert_type: params.alert_type,
-          severity: params.severity,
-          message: params.message,
-        },
-      }),
-      params.severity === 'critical' || params.severity === 'high' ? 'error' : 'warn'
-    );
+    // Targeted broadcast to `exam:{examId}` room only — chief examiners and
+    // invigilators of this exam will receive it.
+    notificationService.broadcastExamAlert(params.exam_id, {
+      alertId,
+      examId: params.exam_id,
+      hallId: params.hall_id,
+      eventId: params.event_id,
+      studentId: params.student_id,
+      alertType: params.alert_type,
+      severity: params.severity,
+      message: params.message,
+    } as import('../types').SocketExamAlertPayload);
+
+    // Send push notification for high/critical alerts (best-effort, non-blocking)
+    if (params.severity === 'critical' || params.severity === 'high') {
+      void pushNotificationService.sendExamAlert(
+        params.exam_id,
+        params.alert_type,
+        params.severity,
+        params.message,
+        undefined
+      ).catch((err: Error) => logger.warn('Push notification failed (non-fatal)', { error: err.message }));
+    }
 
     logger.info('Exam alert raised', {
       alertId,

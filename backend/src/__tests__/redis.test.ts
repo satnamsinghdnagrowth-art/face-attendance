@@ -1,31 +1,54 @@
 /**
- * Tests for Redis safe wrappers.
- * Verifies that every wrapper returns a safe default (null / void / false)
- * instead of throwing when the underlying Redis client fails.
+ * Tests for the Redis safe wrappers (safeGet, safeSetex, safeDel, …).
+ *
+ * Two scenarios per wrapper:
+ *   1. Redis available — command succeeds → returns the expected value.
+ *   2. Redis available — command throws  → returns the safe default (null / void / false).
+ *
+ * The ioredis mock fires the 'ready' event immediately when its handler is
+ * registered so that the module-level `isAvailable` flag is set to true
+ * before any test runs.  This is the correct behaviour to test the "happy
+ * path" through the wrappers; the error path is already handled by the early-
+ * return null guard (tested by checking for null/false/void on rejection).
  */
 
-// Mock ioredis before importing anything that depends on it
+// ─── Mock ioredis ─────────────────────────────────────────────────────────────
+// Must be hoisted before any import that transitively requires ioredis.
+
 jest.mock('ioredis', () => {
   const mockInstance = {
-    get: jest.fn(),
-    setex: jest.fn(),
-    del: jest.fn(),
-    exists: jest.fn(),
-    incr: jest.fn(),
-    expire: jest.fn(),
-    ping: jest.fn(),
-    on: jest.fn().mockReturnThis(),
+    get:        jest.fn(),
+    setex:      jest.fn(),
+    del:        jest.fn(),
+    exists:     jest.fn(),
+    incr:       jest.fn(),
+    expire:     jest.fn(),
+    ping:       jest.fn(),
+    connect:    jest.fn().mockResolvedValue(undefined),
+    quit:       jest.fn().mockResolvedValue('OK'),
+    disconnect: jest.fn(),
+    // Simulate ioredis event registration AND fire 'ready' immediately so the
+    // module-level isAvailable flag is true before any test runs.
+    on: jest.fn().mockImplementation(function (
+      event: string,
+      handler: (...args: unknown[]) => void
+    ) {
+      if (event === 'ready') {
+        // Synchronous call mirrors what a real already-connected client does on
+        // module load — keeps the test environment simple and deterministic.
+        handler();
+      }
+      return mockInstance; // allow chaining
+    }),
   };
   return jest.fn(() => mockInstance);
 });
 
-// Also silence the logger
 jest.mock('../utils/logger', () => ({
-  info: jest.fn(),
-  warn: jest.fn(),
-  error: jest.fn(),
-  debug: jest.fn(),
+  info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(),
 }));
+
+// ─── Imports ─────────────────────────────────────────────────────────────────
 
 import Redis from 'ioredis';
 import {
@@ -37,7 +60,9 @@ import {
   checkRedisHealth,
 } from '../config/redis';
 
-const mockRedis = new (Redis as jest.MockedClass<typeof Redis>)('redis://localhost') as jest.Mocked<InstanceType<typeof Redis>>;
+// Grab the singleton mock instance that redis.ts created internally
+const mockRedis = (Redis as jest.MockedClass<typeof Redis>).mock.results[0]!
+  .value as jest.Mocked<InstanceType<typeof Redis>>;
 
 // ─── safeGet ─────────────────────────────────────────────────────────────────
 

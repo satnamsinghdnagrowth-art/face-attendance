@@ -340,12 +340,16 @@ describe('ExamService.startHallSession', () => {
   beforeEach(() => jest.resetAllMocks());
 
   it('creates session and returns it', async () => {
-    // 1. No existing active session
+    // 1. Hall check: hall exists and belongs to exam
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: HALL_ID, exam_id: EXAM_ID }], rowCount: 1 } as any);
+    // 2. No existing active session
     mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any);
-    // 2. Enrollment count
+    // 3. Enrollment count
     mockQuery.mockResolvedValueOnce({ rows: [{ total: '25' }], rowCount: 1 } as any);
-    // 3. INSERT session RETURNING *
+    // 4. INSERT session RETURNING *
     mockQuery.mockResolvedValueOnce({ rows: [fakeSession], rowCount: 1 } as any);
+    // 5. Get hall name for socket broadcast (non-fatal, in try/catch)
+    mockQuery.mockResolvedValueOnce({ rows: [{ hall_name: 'Hall A' }], rowCount: 1 } as any);
 
     const result = await examService.startHallSession(EXAM_ID, HALL_ID, INVIG_ID);
 
@@ -353,8 +357,8 @@ describe('ExamService.startHallSession', () => {
     expect(result.status).toBe('active');
     expect(result.hall_id).toBe(HALL_ID);
 
-    // INSERT was the 3rd call
-    const [insertSql, insertParams] = mockQuery.mock.calls[2]!;
+    // INSERT was the 4th call (index 3)
+    const [insertSql, insertParams] = mockQuery.mock.calls[3]!;
     expect(insertSql).toContain('INSERT INTO exam_sessions');
     expect(insertParams).toContain(EXAM_ID);
     expect(insertParams).toContain(HALL_ID);
@@ -363,7 +367,9 @@ describe('ExamService.startHallSession', () => {
   });
 
   it('throws if hall already has an active session', async () => {
-    // Active session exists
+    // 1. Hall check: hall exists and belongs to exam
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: HALL_ID, exam_id: EXAM_ID }], rowCount: 1 } as any);
+    // 2. Active session exists
     mockQuery.mockResolvedValueOnce({
       rows: [{ id: 'existing-session-id' }],
       rowCount: 1,
@@ -371,10 +377,10 @@ describe('ExamService.startHallSession', () => {
 
     await expect(
       examService.startHallSession(EXAM_ID, HALL_ID, INVIG_ID)
-    ).rejects.toThrow('An active session already exists for this hall');
+    ).rejects.toThrow('already active');
 
-    // Only the SELECT was made; no INSERT
-    expect(mockQuery).toHaveBeenCalledTimes(1);
+    // Hall check + active session check = 2 queries; no INSERT
+    expect(mockQuery).toHaveBeenCalledTimes(2);
   });
 });
 

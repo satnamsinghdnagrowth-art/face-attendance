@@ -1,5 +1,6 @@
 import { query } from '../config/database';
 import { faceService } from './face.service';
+import { notificationService } from './notification.service';
 import logger from '../utils/logger';
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
@@ -198,6 +199,29 @@ export class VerificationService {
       verdict,
       confidence: maxSimilarity,
     });
+
+    // Broadcast verification result to exam room (used by ChiefExaminerDashboard + StudentListScreen)
+    // Fetch hall_id from session to target the right sub-room
+    try {
+      const sessionRow = await query<{ hall_id: string }>(
+        'SELECT hall_id FROM exam_sessions WHERE id = $1',
+        [params.exam_session_id]
+      );
+      const hallId = sessionRow.rows[0]?.hall_id ?? '';
+      notificationService.broadcastVerificationEvent(params.exam_id, hallId, {
+        eventId,
+        examId: params.exam_id,
+        hallId,
+        studentId: params.student_id,
+        studentName: expectedStudent.name,
+        verdict,
+        confidence: maxSimilarity,
+        scanType: params.scan_type,
+        scannedAt: new Date(),
+      });
+    } catch {
+      // non-fatal — broadcast failure must never block the scan response
+    }
 
     return {
       event_id: eventId,

@@ -4,7 +4,7 @@ import app from './app';
 import env from './config/env';
 import logger from './utils/logger';
 import { checkDatabaseHealth, pool } from './config/database';
-import { checkRedisHealth, redisClient } from './config/redis';
+import { checkRedisHealth, disconnectRedis } from './config/redis';
 import { initializeSockets } from './sockets/attendance.socket';
 import { setSocketIO } from './services/notification.service';
 import cron from 'node-cron';
@@ -75,6 +75,56 @@ const startServer = async (): Promise<void> => {
     }
   });
 
+  // ─── 90-day verification image cleanup (Phase 2 — GDPR compliance) ────────
+  // Runs daily at 2:00 AM. Nullifies image URLs for events older than 90 days.
+  // Keeps the audit record intact but removes personally identifiable images.
+  cron.schedule('0 2 * * *', async () => {
+    try {
+      const { query: dbQuery } = await import('./config/database');
+      const result = await dbQuery(
+        `UPDATE verification_events
+         SET face_image_url = NULL,
+             id_card_image_url = NULL
+         WHERE scanned_at < NOW() - INTERVAL '90 days'
+           AND (face_image_url IS NOT NULL OR id_card_image_url IS NOT NULL)
+         RETURNING id`,
+        []
+      );
+      if (result.rowCount && result.rowCount > 0) {
+        logger.info('Image retention cleanup complete', {
+          purged: result.rowCount,
+          policy: '90 days',
+        });
+      }
+    } catch (error) {
+      logger.error('Cron job failed: image retention cleanup', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // ─── Auto-end stale exam sessions older than 6 hours ─────────────────────
+  cron.schedule('*/15 * * * *', async () => {
+    try {
+      const { query: dbQuery } = await import('./config/database');
+      const result = await dbQuery(
+        `UPDATE exam_sessions
+         SET status = 'aborted', ended_at = NOW()
+         WHERE status = 'active'
+           AND started_at < NOW() - INTERVAL '6 hours'
+         RETURNING id`,
+        []
+      );
+      if (result.rowCount && result.rowCount > 0) {
+        logger.warn('Auto-aborted stale exam sessions', { count: result.rowCount });
+      }
+    } catch (error) {
+      logger.error('Cron job failed: stale exam session cleanup', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
   // ─── Start Listening ────────────────────────────────────────────────────
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -129,9 +179,9 @@ const gracefulShutdown = async (signal: string): Promise<void> => {
     });
   }
 
-  // Close Redis connection
+  // Close Redis (disconnectRedis handles already-closed / unavailable states safely)
   try {
-    await redisClient.quit();
+    await disconnectRedis();
     logger.info('Redis connection closed');
   } catch (error) {
     logger.error('Error closing Redis connection', {

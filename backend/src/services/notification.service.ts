@@ -1,5 +1,9 @@
 import { Server } from 'socket.io';
-import { AttendanceStatus, UserRole, SocketAttendancePayload, SocketSessionPayload } from '../types';
+import {
+  AttendanceStatus, UserRole,
+  SocketAttendancePayload, SocketSessionPayload,
+  SocketExamAlertPayload, SocketVerificationPayload,
+} from '../types';
 import logger from '../utils/logger';
 
 let ioInstance: Server | null = null;
@@ -75,9 +79,71 @@ export class NotificationService {
   broadcastSystemAlert(message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
     const io = getIO();
     if (!io) return;
-
     io.emit('system-alert', { message, level, timestamp: new Date() });
     logger.info('System alert broadcast', { message, level });
+  }
+
+  // ─── Exam Monitoring Broadcasts ───────────────────────────────────────────
+
+  /**
+   * Broadcast an exam alert to all sockets in the exam room.
+   * Room: exam:{examId}
+   * Event: exam_alert
+   * Listeners: chief examiners, hall invigilators of that exam
+   */
+  broadcastExamAlert(examId: string, payload: SocketExamAlertPayload): void {
+    const io = getIO();
+    if (!io) return;
+    io.to(`exam:${examId}`).emit('exam_alert', payload);
+    logger.debug('Exam alert broadcast', { examId, alertType: payload.alertType, severity: payload.severity });
+  }
+
+  /**
+   * Broadcast a verification event to the exam room.
+   * Room: exam:{examId}  AND  exam_hall:{hallId}
+   * Event: verification_event
+   * Listeners: chief examiner sees all; invigilator sees their hall only
+   */
+  broadcastVerificationEvent(examId: string, hallId: string, payload: SocketVerificationPayload): void {
+    const io = getIO();
+    if (!io) return;
+    io.to(`exam:${examId}`).to(`exam_hall:${hallId}`).emit('verification_event', payload);
+    logger.debug('Verification event broadcast', { examId, hallId, verdict: payload.verdict });
+  }
+
+  /**
+   * Broadcast exam status change (started / cancelled) to the exam room.
+   * Room: exam:{examId}
+   * Event: exam_status_changed
+   */
+  broadcastExamStatusChange(examId: string, status: string, examCode: string): void {
+    const io = getIO();
+    if (!io) return;
+    io.to(`exam:${examId}`).emit('exam_status_changed', {
+      examId,
+      examCode,
+      status,
+      changedAt: new Date().toISOString(),
+    });
+    logger.info('Exam status change broadcast', { examId, status });
+  }
+
+  /**
+   * Broadcast hall session lifecycle events (started / ended) to the exam room.
+   * Room: exam:{examId}
+   * Event: hall_session_update
+   */
+  broadcastHallSessionUpdate(
+    examId: string,
+    payload: { hallId: string; sessionId: string; event: 'started' | 'ended'; hallName?: string }
+  ): void {
+    const io = getIO();
+    if (!io) return;
+    io.to(`exam:${examId}`).emit('hall_session_update', {
+      ...payload,
+      timestamp: new Date().toISOString(),
+    });
+    logger.debug('Hall session update broadcast', { examId, ...payload });
   }
 
   getConnectedCount(): number {
