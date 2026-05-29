@@ -169,12 +169,17 @@ describe('hall_invigilator: exam session lifecycle', () => {
     expect(session.invigilator_id).toBe(INVIG_ID);
   });
 
-  it('throws when hall already has an active session', async () => {
+  it('resumes existing session instead of throwing when hall already has one', async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [{ id: HALL_ID, exam_id: EXAM_ID }], rowCount: 1 } as any) // hall check
-      .mockResolvedValueOnce({ rows: [SESSION_ROW], rowCount: 1 } as any);                       // active session exists
+      .mockResolvedValueOnce({ rows: [SESSION_ROW], rowCount: 1 } as any);                       // active session found
 
-    await expect(examService.startHallSession(EXAM_ID, HALL_ID, INVIG_ID)).rejects.toThrow();
+    const result = await examService.startHallSession(EXAM_ID, HALL_ID, INVIG_ID);
+
+    // Returns the existing session with resumed=true instead of throwing
+    expect(result.resumed).toBe(true);
+    expect(result.id).toBe(SESSION_ID);
+    expect(mockQuery).toHaveBeenCalledTimes(2); // no INSERT
   });
 
   it('can end a hall session and returns void', async () => {

@@ -356,6 +356,7 @@ describe('ExamService.startHallSession', () => {
     expect(result.id).toBe(SESSION_ID);
     expect(result.status).toBe('active');
     expect(result.hall_id).toBe(HALL_ID);
+    expect(result.resumed).toBe(false); // new session, not resumed
 
     // INSERT was the 4th call (index 3)
     const [insertSql, insertParams] = mockQuery.mock.calls[3]!;
@@ -366,21 +367,60 @@ describe('ExamService.startHallSession', () => {
     expect(insertParams).toContain(25); // total_students from count
   });
 
-  it('throws if hall already has an active session', async () => {
-    // 1. Hall check: hall exists and belongs to exam
+  it('resumes existing active session instead of blocking (default behavior)', async () => {
+    const existingSession = { ...fakeSession, id: 'existing-session-id' };
+    // 1. Hall check: exists
     mockQuery.mockResolvedValueOnce({ rows: [{ id: HALL_ID, exam_id: EXAM_ID }], rowCount: 1 } as any);
-    // 2. Active session exists
-    mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 'existing-session-id' }],
-      rowCount: 1,
-    } as any);
+    // 2. Active session found — return it
+    mockQuery.mockResolvedValueOnce({ rows: [existingSession], rowCount: 1 } as any);
 
-    await expect(
-      examService.startHallSession(EXAM_ID, HALL_ID, INVIG_ID)
-    ).rejects.toThrow('already active');
+    const result = await examService.startHallSession(EXAM_ID, HALL_ID, INVIG_ID);
 
-    // Hall check + active session check = 2 queries; no INSERT
+    expect(result.id).toBe('existing-session-id');
+    expect(result.resumed).toBe(true);
+    // No INSERT should have been made
     expect(mockQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it('force=true closes existing session and starts new one', async () => {
+    const existingSession = { ...fakeSession, id: 'old-session-id' };
+    // 1. Hall check: exists
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: HALL_ID, exam_id: EXAM_ID }], rowCount: 1 } as any);
+    // 2. Active session found
+    mockQuery.mockResolvedValueOnce({ rows: [existingSession], rowCount: 1 } as any);
+    // 3. UPDATE existing session to completed
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 } as any);
+    // 4. Enrollment count
+    mockQuery.mockResolvedValueOnce({ rows: [{ total: '3' }], rowCount: 1 } as any);
+    // 5. INSERT new session
+    mockQuery.mockResolvedValueOnce({ rows: [fakeSession], rowCount: 1 } as any);
+    // 6. Hall name for broadcast
+    mockQuery.mockResolvedValueOnce({ rows: [{ hall_name: 'Hall A' }], rowCount: 1 } as any);
+
+    const result = await examService.startHallSession(EXAM_ID, HALL_ID, INVIG_ID, true);
+
+    expect(result.id).toBe(SESSION_ID); // new session
+    expect(result.resumed).toBe(false);
+    // Verify UPDATE was called (the 3rd query)
+    const [updateSql] = mockQuery.mock.calls[2]!;
+    expect(updateSql).toContain('UPDATE exam_sessions');
+    expect(updateSql).toContain('completed');
+  });
+
+  it('resumes existing active session (does NOT throw)', async () => {
+    const existingRow = { id: 'existing-session-id', hall_id: HALL_ID, exam_id: EXAM_ID, status: 'active',
+      invigilator_id: INVIG_ID, started_at: new Date().toISOString(), ended_at: null,
+      total_students: 3, verified_count: 0, flagged_count: 0, rejected_count: 0 };
+
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: HALL_ID, exam_id: EXAM_ID }], rowCount: 1 } as any) // hall check
+      .mockResolvedValueOnce({ rows: [existingRow], rowCount: 1 } as any);                      // active session
+
+    const result = await examService.startHallSession(EXAM_ID, HALL_ID, INVIG_ID);
+
+    expect(result.id).toBe('existing-session-id');
+    expect(result.resumed).toBe(true);
+    expect(mockQuery).toHaveBeenCalledTimes(2); // no INSERT
   });
 });
 

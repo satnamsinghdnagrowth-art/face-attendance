@@ -436,12 +436,18 @@ export class ExamService {
   }
 
   // 9. Start a hall session
+  //    Behaviour:
+  //      - forceNew=false (default): if an active session already exists, RESUME it.
+  //        Invigilators can open the app any time without worrying about stale sessions.
+  //      - forceNew=true: end any existing active session first, then create a fresh one.
+  //        Used when the invigilator explicitly wants to reset (e.g. new exam day).
   async startHallSession(
     examId: string,
     hallId: string,
-    invigilatorId: string
-  ): Promise<ExamSession> {
-    // Validate params — surface clear errors to the mobile client
+    invigilatorId: string,
+    forceNew = false
+  ): Promise<ExamSession & { resumed: boolean }> {
+    // Validate params
     if (!examId || !hallId || !invigilatorId) {
       throw new CustomError('examId, hallId, and invigilatorId are all required', 400);
     }
@@ -452,20 +458,37 @@ export class ExamService {
       [hallId]
     );
     if (hallCheck.rows.length === 0) {
-      throw new NotFoundError(`Hall ${hallId} not found`);
+      throw new NotFoundError(`Hall not found. Run migrations and seed data first.`);
     }
     if (hallCheck.rows[0].exam_id !== examId) {
       throw new CustomError('Hall does not belong to the specified exam', 400);
     }
 
-    // Check for existing active session in this hall
-    const activeResult = await query<{ id: string }>(
-      `SELECT id FROM exam_sessions
-       WHERE hall_id = $1 AND status = 'active'`,
+    // Check for an existing active session
+    const activeResult = await query<ExamSession>(
+      `SELECT * FROM exam_sessions WHERE hall_id = $1 AND status = 'active' LIMIT 1`,
       [hallId]
     );
+
     if (activeResult.rows.length > 0) {
-      throw new CustomError('A session is already active for this hall. End it first before starting a new one.', 409);
+      const existingSession = activeResult.rows[0];
+
+      if (!forceNew) {
+        // Resume the existing session — invigilator can continue scanning
+        logger.info('Resuming existing hall session', {
+          sessionId: existingSession.id, hallId, invigilatorId,
+        });
+        return { ...existingSession, resumed: true };
+      }
+
+      // forceNew=true: close the existing session and start fresh
+      await query(
+        `UPDATE exam_sessions SET status = 'completed', ended_at = NOW() WHERE id = $1`,
+        [existingSession.id]
+      );
+      logger.info('Force-closed previous session to start fresh', {
+        closedSessionId: existingSession.id, hallId,
+      });
     }
 
     // Get enrolled student count for this hall
@@ -500,7 +523,7 @@ export class ExamService {
       });
     } catch { /* non-fatal */ }
 
-    return session;
+    return { ...session, resumed: false };
   }
 
   // 10. End a hall session and create no-show alerts

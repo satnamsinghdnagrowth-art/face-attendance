@@ -257,15 +257,28 @@ export const startHallSession = async (
     if (!req.user) throw new UnauthorizedError();
 
     const { examId, hallId } = req.params;
+    // force=true → end any existing active session and start a fresh one
+    const forceNew = req.query['force'] === 'true' || req.body?.force === true;
 
-    const session = await examService.startHallSession(examId, hallId, req.user.userId);
-    logger.info('Exam session started via controller', {
-      sessionId: session.id,
-      examId,
-      hallId,
-      invigilatorId: req.user.userId,
+    const session = await examService.startHallSession(examId, hallId, req.user.userId, forceNew);
+
+    const message = session.resumed
+      ? 'Existing session resumed'
+      : forceNew
+        ? 'Previous session closed — new session started'
+        : 'Exam session started';
+
+    logger.info(message, {
+      sessionId: session.id, examId, hallId,
+      invigilatorId: req.user.userId, resumed: session.resumed,
     });
-    createdResponse(res, session, 'Exam session started');
+
+    // Use 200 for resumed sessions, 201 for new ones
+    if (session.resumed) {
+      successResponse(res, session, message);
+    } else {
+      createdResponse(res, session, message);
+    }
   } catch (error) {
     next(error);
   }
