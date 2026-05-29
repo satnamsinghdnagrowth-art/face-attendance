@@ -17,8 +17,12 @@ import { useNavigation } from '@react-navigation/native';
 
 import { examApi } from '@/api/exam.api';
 import { ExamWithStats, ExamStats, ExamAlert, ExamHall } from '@/api/exam.api';
+import { useAppDispatch } from '@/store';
+import { addAlert } from '@/store/slices/exam.slice';
+import socketService from '@/services/socket.service';
 import { Colors } from '@/constants/colors';
 import { BorderRadius, FontSizes, FontWeights, Shadow, Spacing } from '@/constants/theme';
+import { SocketExamAlertPayload } from '@/types';
 
 const AUTO_REFRESH_MS = 30000;
 
@@ -31,6 +35,7 @@ const severityColors: Record<string, string> = {
 
 const ChiefExaminerDashboard: React.FC = () => {
   const navigation = useNavigation();
+  const dispatch = useAppDispatch();
   const insets = useSafeAreaInsets();
   const tabBarHeight = 52 + Math.max(insets.bottom, 8);
 
@@ -122,6 +127,67 @@ const ChiefExaminerDashboard: React.FC = () => {
       loadData();
     }
   }, [selectedExamId]);
+
+  // ─── Socket.IO real-time integration ───────────────────────────────────────
+  // Join the exam room to receive live alerts and verification events.
+  // Falls back to polling (30s auto-refresh) when socket is not connected.
+  useEffect(() => {
+    if (!selectedExamId) return;
+
+    // Join exam room for real-time events
+    if (socketService.isConnected()) {
+      socketService.joinExamRoom(selectedExamId);
+    }
+
+    // New exam alert → add to local state immediately
+    socketService.onExamAlert((payload: SocketExamAlertPayload) => {
+      if (payload.examId !== selectedExamId) return;
+      dispatch(addAlert({
+        id: payload.alertId,
+        exam_id: payload.examId,
+        hall_id: payload.hallId,
+        event_id: payload.eventId,
+        student_id: payload.studentId,
+        student_name: payload.studentName,
+        alert_type: payload.alertType,
+        severity: payload.severity,
+        message: payload.message,
+        is_resolved: false,
+        created_at: new Date().toISOString(),
+      }));
+      // Also refresh alerts list for full accuracy
+      setAlerts((prev) => [{
+        id: payload.alertId,
+        exam_id: payload.examId,
+        hall_id: payload.hallId,
+        event_id: payload.eventId,
+        student_id: payload.studentId,
+        student_name: payload.studentName,
+        alert_type: payload.alertType,
+        severity: payload.severity,
+        message: payload.message,
+        is_resolved: false,
+        created_at: new Date().toISOString(),
+      } as typeof prev[0], ...prev]);
+    });
+
+    // Hall session started / ended → refresh exam data
+    socketService.onHallSessionUpdate(() => {
+      loadData();
+    });
+
+    // Exam status changed → reload
+    socketService.onExamStatusChanged(({ examId }) => {
+      if (examId === selectedExamId) loadData();
+    });
+
+    return () => {
+      socketService.offExamAlert();
+      socketService.offHallSessionUpdate();
+      socketService.offExamStatusChanged();
+      if (selectedExamId) socketService.leaveExamRoom(selectedExamId);
+    };
+  }, [selectedExamId, dispatch, loadData]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -366,7 +432,7 @@ const ChiefExaminerDashboard: React.FC = () => {
             </View>
           )}
 
-          {/* TODO: Connect socket for real-time updates */}
+          {/* Socket.IO connected — real-time alerts and hall updates active */}
         </View>
       </ScrollView>
     </SafeAreaView>

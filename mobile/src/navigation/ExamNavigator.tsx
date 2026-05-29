@@ -13,19 +13,22 @@ import FlaggedCasesScreen from '@/screens/exam/FlaggedCasesScreen';
 import ExamDetailScreen from '@/screens/exam/ExamDetailScreen';
 import CreateExamScreen from '@/screens/exam/CreateExamScreen';
 import ComplianceReportScreen from '@/screens/exam/ComplianceReportScreen';
+import ProfileScreen from '@/screens/student/ProfileScreen';
 
 export type ExamTabParamList = {
   ExamList: undefined;
   ExamLive: undefined;
   ExamAlerts: undefined;
   ExamReview: undefined;
+  ExamProfile: undefined;
 };
 
 export type ExamStackParamList = {
   ExamTabs: undefined;
   ExamDetail: { examId: string };
   CreateExam: undefined;
-  ComplianceReport: undefined;
+  FlaggedCases: { examId: string };
+  ComplianceReport: { examId: string };
 };
 
 const Tab = createBottomTabNavigator<ExamTabParamList>();
@@ -72,6 +75,9 @@ const ExamTabs: React.FC = () => {
             case 'ExamReview':
               iconName = focused ? 'eye' : 'eye-outline';
               break;
+            case 'ExamProfile':
+              iconName = focused ? 'person' : 'person-outline';
+              break;
           }
 
           return (
@@ -102,6 +108,11 @@ const ExamTabs: React.FC = () => {
         component={FlaggedCasesScreen}
         options={{ tabBarLabel: 'Review' }}
       />
+      <Tab.Screen
+        name="ExamProfile"
+        component={ProfileScreen}
+        options={{ tabBarLabel: 'Profile' }}
+      />
     </Tab.Navigator>
   );
 };
@@ -112,23 +123,19 @@ export const ExamNavigator: React.FC = () => {
       <Stack.Screen name="ExamTabs" component={ExamTabs} />
       <Stack.Screen name="ExamDetail" component={ExamDetailScreen} />
       <Stack.Screen name="CreateExam" component={CreateExamScreen} />
+      <Stack.Screen name="FlaggedCases" component={FlaggedCasesScreen} />
       <Stack.Screen name="ComplianceReport" component={ComplianceReportScreen} />
     </Stack.Navigator>
   );
 };
 
 const styles = StyleSheet.create({
-  tabLabel: {
-    fontSize: 11,
-    fontWeight: '500',
-  },
+  tabLabel: { fontSize: 11, fontWeight: '500' },
   iconContainer: {
     alignItems: 'center',
     justifyContent: 'center',
     padding: 4,
     borderRadius: 8,
   },
-  iconContainerActive: {
-    backgroundColor: Colors.primaryFaded,
-  },
+  iconContainerActive: { backgroundColor: Colors.primaryFaded },
 });

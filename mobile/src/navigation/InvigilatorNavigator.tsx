@@ -6,18 +6,22 @@ import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '@/constants/colors';
 
-import HallSessionScreen from '@/screens/exam/HallSessionScreen';
+import InvigilatorHomeScreen from '@/screens/exam/InvigilatorHomeScreen';
 import EntryVerificationScreen from '@/screens/exam/EntryVerificationScreen';
 import StudentListScreen from '@/screens/exam/StudentListScreen';
+import HallSessionScreen from '@/screens/exam/HallSessionScreen';
+import ProfileScreen from '@/screens/student/ProfileScreen';
 
+// Tab param list — all screens are paramless (params come from stack context or Redux)
 export type InvigilatorTabParamList = {
   MyHall: undefined;
-  ScanEntry: undefined;
   Students: undefined;
+  Profile: undefined;
 };
 
 export type InvigilatorStackParamList = {
   InvigilatorTabs: undefined;
+  HallSession: { examId: string; hallId: string };
   EntryVerification: {
     sessionId: string;
     examId: string;
@@ -36,7 +40,6 @@ export type InvigilatorStackParamList = {
     seatNumber?: string;
     rollNumber?: string;
   };
-  HallSession: { examId: string; hallId: string };
 };
 
 const Tab = createBottomTabNavigator<InvigilatorTabParamList>();
@@ -68,20 +71,18 @@ const InvigilatorTabs: React.FC = () => {
         tabBarInactiveTintColor: Colors.textMuted,
         tabBarLabelStyle: styles.tabLabel,
         tabBarIcon: ({ focused, color, size }) => {
-          let iconName: keyof typeof Ionicons.glyphMap = 'school';
-
+          let iconName: keyof typeof Ionicons.glyphMap = 'home';
           switch (route.name) {
             case 'MyHall':
-              iconName = focused ? 'school' : 'school-outline';
-              break;
-            case 'ScanEntry':
-              iconName = focused ? 'scan' : 'scan-outline';
+              iconName = focused ? 'home' : 'home-outline';
               break;
             case 'Students':
               iconName = focused ? 'people' : 'people-outline';
               break;
+            case 'Profile':
+              iconName = focused ? 'person' : 'person-outline';
+              break;
           }
-
           return (
             <View style={[styles.iconContainer, focused && styles.iconContainerActive]}>
               <Ionicons name={iconName} size={size} color={color} />
@@ -92,18 +93,18 @@ const InvigilatorTabs: React.FC = () => {
     >
       <Tab.Screen
         name="MyHall"
-        component={HallSessionScreen}
+        component={InvigilatorHomeScreen}
         options={{ tabBarLabel: 'My Hall' }}
-      />
-      <Tab.Screen
-        name="ScanEntry"
-        component={StudentListScreen}
-        options={{ tabBarLabel: 'Scan Entry' }}
       />
       <Tab.Screen
         name="Students"
         component={StudentListScreen}
         options={{ tabBarLabel: 'Students' }}
+      />
+      <Tab.Screen
+        name="Profile"
+        component={ProfileScreen}
+        options={{ tabBarLabel: 'Profile' }}
       />
     </Tab.Navigator>
   );
@@ -113,25 +114,21 @@ export const InvigilatorNavigator: React.FC = () => {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="InvigilatorTabs" component={InvigilatorTabs} />
+      {/* HallSession is stack-only — requires examId + hallId params, never a tab */}
+      <Stack.Screen name="HallSession" component={HallSessionScreen} />
       <Stack.Screen name="EntryVerification" component={EntryVerificationScreen} />
       <Stack.Screen name="ReVerify" component={EntryVerificationScreen} />
-      <Stack.Screen name="HallSession" component={HallSessionScreen} />
     </Stack.Navigator>
   );
 };
 
 const styles = StyleSheet.create({
-  tabLabel: {
-    fontSize: 11,
-    fontWeight: '500',
-  },
+  tabLabel: { fontSize: 11, fontWeight: '500' },
   iconContainer: {
     alignItems: 'center',
     justifyContent: 'center',
     padding: 4,
     borderRadius: 8,
   },
-  iconContainerActive: {
-    backgroundColor: Colors.warningFaded,
-  },
+  iconContainerActive: { backgroundColor: Colors.warningFaded },
 });

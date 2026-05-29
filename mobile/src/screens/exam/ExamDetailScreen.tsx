@@ -15,6 +15,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 
 import { examApi, ExamWithStats, ExamHall, ExamStats } from '@/api/exam.api';
+import { useAppDispatch } from '@/store';
+import { updateExamStatusThunk } from '@/store/slices/exam.slice';
 import { Colors } from '@/constants/colors';
 import { BorderRadius, FontSizes, FontWeights, Shadow, Spacing } from '@/constants/theme';
 
@@ -29,8 +31,10 @@ const statusColors: Record<string, { bg: string[]; label: string }> = {
 
 const ExamDetailScreen: React.FC = () => {
   const navigation = useNavigation();
+  const dispatch = useAppDispatch();
   const route = useRoute<RouteProp<Record<string, RouteParams>, string>>();
-  const { examId } = route.params;
+  // Defensive: ExamDetail is always a stack screen with required params, but guard anyway
+  const examId: string = route.params?.examId ?? '';
 
   const [exam, setExam] = useState<ExamWithStats | null>(null);
   const [stats, setStats] = useState<ExamStats | null>(null);
@@ -78,6 +82,42 @@ const ExamDetailScreen: React.FC = () => {
   const handleViewStudents = useCallback((hall: ExamHall) => {
     (navigation as any).navigate('Students', { hallId: hall.id, examId, sessionId: '' });
   }, [navigation, examId]);
+
+  const handleExamStatusChange = useCallback(
+    (newStatus: 'active' | 'completed' | 'cancelled') => {
+      const labels: Record<string, string> = {
+        active:    'Start Exam',
+        completed: 'Mark as Completed',
+        cancelled: 'Cancel Exam',
+      };
+      const messages: Record<string, string> = {
+        active:    'Start this exam? All halls will be notified.',
+        completed: 'Mark this exam as completed? This cannot be undone.',
+        cancelled: 'Cancel this exam? This cannot be undone.',
+      };
+      Alert.alert(
+        labels[newStatus] ?? 'Update Status',
+        messages[newStatus] ?? 'Update exam status?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Confirm',
+            style: newStatus === 'cancelled' ? 'destructive' : 'default',
+            onPress: async () => {
+              try {
+                await dispatch(updateExamStatusThunk({ examId, status: newStatus })).unwrap();
+                await loadExam();
+              } catch (e: unknown) {
+                const msg = e instanceof Error ? e.message : 'Failed to update status';
+                Alert.alert('Error', msg);
+              }
+            },
+          },
+        ]
+      );
+    },
+    [dispatch, examId, loadExam]
+  );
 
   if (loading) {
     return (
@@ -300,11 +340,54 @@ const ExamDetailScreen: React.FC = () => {
             )}
           </View>
 
-          {/* Quick actions */}
+          {/* Exam status actions */}
+          {exam.status === 'scheduled' && (
+            <View style={styles.statusActions}>
+              <TouchableOpacity
+                style={[styles.statusBtn, styles.statusBtnStart]}
+                onPress={() => handleExamStatusChange('active')}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="play-circle-outline" size={18} color="white" />
+                <Text style={styles.statusBtnStartText}>Start Exam</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.statusBtn, styles.statusBtnCancel]}
+                onPress={() => handleExamStatusChange('cancelled')}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="close-circle-outline" size={18} color={Colors.danger} />
+                <Text style={styles.statusBtnCancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {exam.status === 'active' && (
+            <View style={styles.statusActions}>
+              <TouchableOpacity
+                style={[styles.statusBtn, styles.statusBtnComplete]}
+                onPress={() => handleExamStatusChange('completed')}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="checkmark-circle-outline" size={18} color="white" />
+                <Text style={styles.statusBtnStartText}>Mark Completed</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.statusBtn, styles.statusBtnCancel]}
+                onPress={() => handleExamStatusChange('cancelled')}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="stop-circle-outline" size={18} color={Colors.danger} />
+                <Text style={styles.statusBtnCancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Export compliance report */}
           <TouchableOpacity
             style={styles.exportBtn}
             activeOpacity={0.8}
-            onPress={() => navigation.navigate('ComplianceReport' as never)}
+            onPress={() => (navigation as any).navigate('ComplianceReport', { examId })}
           >
             <Ionicons name="download-outline" size={18} color={Colors.primary} />
             <Text style={styles.exportBtnText}>Export Compliance Report</Text>
@@ -567,6 +650,33 @@ const styles = StyleSheet.create({
     fontWeight: FontWeights.semibold,
     color: Colors.primary,
   },
+
+  // Status action buttons
+  statusActions: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  statusBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: BorderRadius.lg,
+  },
+  statusBtnStart:    { backgroundColor: Colors.success },
+  statusBtnComplete: { backgroundColor: Colors.primary },
+  statusBtnCancel: {
+    backgroundColor: Colors.dangerFaded,
+    borderWidth: 1,
+    borderColor: Colors.danger + '50',
+    flex: 0,
+    paddingHorizontal: 16,
+  },
+  statusBtnStartText:  { color: 'white', fontSize: FontSizes.sm, fontWeight: FontWeights.bold },
+  statusBtnCancelText: { color: Colors.danger, fontSize: FontSizes.sm, fontWeight: FontWeights.semibold },
 
   loadingState: {
     flex: 1,

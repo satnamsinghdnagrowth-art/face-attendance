@@ -16,7 +16,10 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 
 import { examApi } from '@/api/exam.api';
 import { StudentSessionStatus } from '@/api/exam.api';
-import { useAppSelector } from '@/store';
+import { useAppSelector, useAppDispatch } from '@/store';
+import { updateStudentVerdict } from '@/store/slices/exam.slice';
+import socketService from '@/services/socket.service';
+import { SocketVerificationPayload } from '@/types';
 import { Colors } from '@/constants/colors';
 import { BorderRadius, FontSizes, FontWeights, Shadow, Spacing } from '@/constants/theme';
 
@@ -39,10 +42,12 @@ const statusConfig: Record<
   not_scanned: { color: Colors.textMuted, bg: Colors.surfaceVariant, label: 'Pending' },
 };
 
-const AUTO_REFRESH_INTERVAL = 10000;
+// Fallback polling interval when socket is not connected
+const POLLING_INTERVAL_MS = 30_000; // reduced from 10s — socket handles real-time updates
 
 const StudentListScreen: React.FC = () => {
   const navigation = useNavigation();
+  const dispatch = useAppDispatch();
   const route = useRoute<RouteProp<Record<string, RouteParams>, string>>();
   const insets = useSafeAreaInsets();
   const tabBarHeight = 52 + Math.max(insets.bottom, 8);
@@ -81,7 +86,7 @@ const StudentListScreen: React.FC = () => {
     autoRefreshTimer.current = setTimeout(async () => {
       await loadStudents();
       scheduleAutoRefresh();
-    }, AUTO_REFRESH_INTERVAL);
+    }, POLLING_INTERVAL_MS);
   }, [loadStudents]);
 
   useEffect(() => {
@@ -91,6 +96,45 @@ const StudentListScreen: React.FC = () => {
       if (autoRefreshTimer.current) clearTimeout(autoRefreshTimer.current);
     };
   }, []);
+
+  // ─── Socket.IO: real-time verdict updates ─────────────────────────────────
+  // Invigilator joins the exam hall room so each verification scan instantly
+  // updates the student row without waiting for the next poll cycle.
+  useEffect(() => {
+    if (!examId || !hallId) return;
+
+    if (socketService.isConnected()) {
+      socketService.joinExamHall(examId, hallId);
+    }
+
+    socketService.onVerificationEvent((payload: SocketVerificationPayload) => {
+      if (payload.examId !== examId) return;
+      // Update matching student's verdict in local state instantly
+      setStudents((prev) =>
+        prev.map((s) =>
+          s.student_id === payload.studentId
+            ? {
+                ...s,
+                latest_verdict: payload.verdict as StudentSessionStatus['latest_verdict'],
+                confidence_score: payload.confidence,
+                scanned_at: new Date(payload.scannedAt).toISOString(),
+              }
+            : s
+        )
+      );
+      // Also dispatch to Redux for cross-screen consistency
+      dispatch(updateStudentVerdict({
+        studentId: payload.studentId,
+        verdict: payload.verdict as StudentSessionStatus['latest_verdict'],
+        confidence: payload.confidence,
+      }));
+    });
+
+    return () => {
+      socketService.offVerificationEvent();
+      if (examId && hallId) socketService.leaveExamHall(examId, hallId);
+    };
+  }, [examId, hallId, dispatch]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

@@ -93,19 +93,19 @@ const LoginScreen: React.FC = () => {
     <View style={styles.container}>
       {/* Header gradient */}
       <LinearGradient
-        colors={[Colors.primaryDark, Colors.primary]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
+        colors={['#0F172A', Colors.primaryDark, '#4C1D95']}
+        start={{ x: 0.1, y: 0 }}
+        end={{ x: 0.9, y: 1 }}
         style={styles.headerGradient}
       >
         <SafeAreaView edges={['top']}>
           <View style={styles.headerContent}>
             <View style={styles.logoContainer}>
-              <Ionicons name="scan" size={36} color={Colors.primary} />
+              <Ionicons name="shield-checkmark" size={36} color={Colors.primary} />
             </View>
-            <Text style={styles.appName}>FaceAttend</Text>
-            <Text style={styles.welcomeText}>Welcome back</Text>
-            <Text style={styles.headerSubtext}>Sign in to continue</Text>
+            <Text style={styles.appName}>ExamGuard</Text>
+            <Text style={styles.welcomeText}>Secure Sign In</Text>
+            <Text style={styles.headerSubtext}>Identity verification & exam monitoring</Text>
           </View>
         </SafeAreaView>
 
@@ -191,9 +191,9 @@ const LoginScreen: React.FC = () => {
             <View style={styles.hintsContainer}>
               <Text style={styles.hintsTitle}>Default test accounts</Text>
               {[
-                { role: 'Student', email: 'student@test.com', icon: 'school-outline' },
-                { role: 'Teacher', email: 'teacher@test.com', icon: 'person-outline' },
-                { role: 'Admin', email: 'admin@test.com', icon: 'shield-outline' },
+                { role: 'Student', email: 'alice@student.com', icon: 'school-outline' },
+                { role: 'Investigator', email: 'invig.a@exam.com', icon: 'person-outline' },
+                { role: 'Admin', email: 'admin@school.com', icon: 'shield-outline' },
               ].map(({ role, email: hintEmail, icon }) => (
                 <TouchableOpacity
                   key={role}

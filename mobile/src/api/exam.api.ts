@@ -141,6 +141,10 @@ export const examApi = {
   updateExam: (examId: string, data: Partial<Exam>) =>
     apiClient.patch<ApiResponse<Exam>>(`/v2/exams/${examId}`, data),
 
+  // Exam status transition: 'active' | 'completed' | 'cancelled'
+  updateExamStatus: (examId: string, status: 'active' | 'completed' | 'cancelled') =>
+    apiClient.patch<ApiResponse<Exam>>(`/v2/exams/${examId}/status`, { status }),
+
   getExamStats: (examId: string) =>
     apiClient.get<ApiResponse<ExamStats>>(`/v2/exams/${examId}/stats`),
 
@@ -165,10 +169,23 @@ export const examApi = {
   getEnrollments: (examId: string, params?: { hall_id?: string }) =>
     apiClient.get<ApiResponse<ExamEnrollment[]>>(`/v2/exams/${examId}/enrollments`, { params }),
 
+  // CSV enrollment: formData must have field "file" with the CSV
+  enrollFromCSV: (
+    examId: string,
+    hallId: string,
+    formData: FormData
+  ) =>
+    apiClient.post<ApiResponse<{ total_rows: number; enrolled: number; skipped: number; errors: Array<{ row: number; reason: string }> }>>(
+      `/v2/exams/${examId}/halls/${hallId}/enroll/csv`,
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } }
+    ),
+
   // Sessions
-  startSession: (examId: string, hallId: string) =>
-    apiClient.post<ApiResponse<ExamSession>>(
-      `/v2/exams/${examId}/halls/${hallId}/session/start`,
+  // force=true → closes any existing active session and starts a fresh one
+  startSession: (examId: string, hallId: string, force = false) =>
+    apiClient.post<ApiResponse<ExamSession & { resumed: boolean }>>(
+      `/v2/exams/${examId}/halls/${hallId}/session/start${force ? '?force=true' : ''}`,
       {}
     ),
 

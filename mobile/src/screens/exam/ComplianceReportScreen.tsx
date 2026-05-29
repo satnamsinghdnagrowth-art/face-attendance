@@ -20,12 +20,14 @@ type RouteParams = RouteProp<ExamStackParamList, 'ComplianceReport'>;
 const ComplianceReportScreen: React.FC = () => {
   const navigation = useNavigation();
   const route = useRoute<RouteParams>();
-  const { examId } = route.params;
+  // Defensive access — ComplianceReport always requires examId (stack-only screen)
+  const examId: string = (route.params as { examId?: string } | undefined)?.examId ?? '';
 
   const [exam, setExam] = useState<ExamWithStats | null>(null);
   const [stats, setStats] = useState<ExamStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'csv' | 'pdf'>('csv');
 
   const loadData = useCallback(async () => {
     try {
@@ -46,8 +48,8 @@ const ComplianceReportScreen: React.FC = () => {
     setIsExporting(true);
     try {
       const token = await SecureStore.getItemAsync('access_token');
-      const url = `${API_BASE_URL}/v2/exams/${examId}/export?format=csv`;
-      const filename = `exam_report_${examId}_${Date.now()}.csv`;
+      const url = `${API_BASE_URL}/v2/exams/${examId}/export?format=${exportFormat}`;
+      const filename = `exam_report_${examId}_${Date.now()}.${exportFormat}`;
       const fileUri = `${(FileSystem as unknown as { cacheDirectory: string }).cacheDirectory ?? ''}${filename}`;
 
       const result = await FileSystem.downloadAsync(url, fileUri, {
@@ -71,7 +73,7 @@ const ComplianceReportScreen: React.FC = () => {
     } finally {
       setIsExporting(false);
     }
-  }, [examId, exam]);
+  }, [examId, exam, exportFormat]);
 
   if (isLoading) {
     return (
@@ -157,6 +159,36 @@ const ComplianceReportScreen: React.FC = () => {
           </View>
         </View>
 
+        {/* Digital signature / report hash */}
+        {(exam as any)?.report_hash && (
+          <View style={styles.hashCard}>
+            <Ionicons name="shield-checkmark-outline" size={16} color={Colors.success} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.hashTitle}>Digital Signature</Text>
+              <Text style={styles.hashValue} numberOfLines={1}>
+                {((exam as any).report_hash as string).slice(0, 32)}...
+              </Text>
+              <Text style={styles.hashNote}>SHA-256 tamper-evident hash</Text>
+            </View>
+          </View>
+        )}
+
+        {/* Format picker */}
+        <View style={styles.formatPicker}>
+          <TouchableOpacity
+            style={[styles.formatBtn, exportFormat === 'csv' && styles.formatBtnActive]}
+            onPress={() => setExportFormat('csv')}
+          >
+            <Text style={[styles.formatBtnText, exportFormat === 'csv' && styles.formatBtnTextActive]}>CSV</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.formatBtn, exportFormat === 'pdf' && styles.formatBtnActive]}
+            onPress={() => setExportFormat('pdf')}
+          >
+            <Text style={[styles.formatBtnText, exportFormat === 'pdf' && styles.formatBtnTextActive]}>PDF</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Export action */}
         <TouchableOpacity
           style={[styles.exportBtn, isExporting && styles.exportBtnDisabled]}
@@ -169,7 +201,9 @@ const ComplianceReportScreen: React.FC = () => {
             <Ionicons name="download-outline" size={22} color="white" />
           )}
           <Text style={styles.exportBtnText}>
-            {isExporting ? 'Generating Report...' : 'Export Compliance Report (CSV)'}
+            {isExporting
+              ? 'Generating Report...'
+              : `Export Compliance Report (${exportFormat.toUpperCase()})`}
           </Text>
         </TouchableOpacity>
 
@@ -230,6 +264,41 @@ const styles = StyleSheet.create({
   legalNote: {
     fontSize: FontSizes.xs, color: Colors.textMuted, textAlign: 'center',
     lineHeight: 18, paddingHorizontal: Spacing.md,
+  },
+  // Format picker
+  formatPicker: {
+    flexDirection: 'row', gap: Spacing.sm,
+  },
+  formatBtn: {
+    flex: 1, alignItems: 'center', paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.lg, borderWidth: 1.5, borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  formatBtnActive: {
+    borderColor: Colors.primary, backgroundColor: Colors.primary + '15',
+  },
+  formatBtnText: {
+    fontSize: FontSizes.md, fontWeight: FontWeights.semibold, color: Colors.textSecondary,
+  },
+  formatBtnTextActive: {
+    color: Colors.primary,
+  },
+  // Hash card
+  hashCard: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm,
+    backgroundColor: Colors.successFaded, borderRadius: BorderRadius.lg,
+    padding: Spacing.md, borderWidth: 1, borderColor: Colors.success + '40',
+  },
+  hashTitle: {
+    fontSize: FontSizes.xs, fontWeight: FontWeights.bold, color: Colors.success,
+    textTransform: 'uppercase', letterSpacing: 0.5,
+  },
+  hashValue: {
+    fontSize: FontSizes.sm, fontWeight: FontWeights.medium, color: Colors.textPrimary,
+    fontVariant: ['tabular-nums'], marginTop: 2,
+  },
+  hashNote: {
+    fontSize: FontSizes.xs, color: Colors.textMuted, marginTop: 2,
   },
 });
 

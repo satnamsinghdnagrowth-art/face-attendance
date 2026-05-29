@@ -9,6 +9,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 
 import { examApi, ExamWithStats, ExamHall, ExamSession } from '@/api/exam.api';
+import { useReVerifyTimer } from '@/hooks/useReVerifyTimer';
 import { useAppDispatch, useAppSelector } from '@/store';
 import { startSessionThunk, endSessionThunk, clearCurrentSession } from '@/store/slices/exam.slice';
 import { Colors } from '@/constants/colors';
@@ -27,9 +28,12 @@ function formatElapsed(startedAt: string): string {
 
 const HallSessionScreen: React.FC = () => {
   const navigation = useNavigation();
+  // route.params may be undefined if rendered outside the stack (defensive guard)
   const route = useRoute<RouteParams>();
   const dispatch = useAppDispatch();
-  const { examId, hallId } = route.params;
+  const routeParams = (route.params as InvigilatorStackParamList['HallSession'] | undefined);
+  const examId = routeParams?.examId ?? '';
+  const hallId = routeParams?.hallId ?? '';
   const currentSession = useAppSelector((s) => s.exam.currentSession);
 
   const [exam, setExam] = useState<ExamWithStats | null>(null);
@@ -41,6 +45,30 @@ const HallSessionScreen: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [sessionStats, setSessionStats] = useState({ verified: 0, flagged: 0, not_scanned: 0 });
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const reVerifyIntervalMins = exam?.re_verify_interval_mins ?? 0;
+
+  const { nextReVerifyIn, verifyCount } = useReVerifyTimer({
+    intervalMins: reVerifyIntervalMins,
+    sessionActive: !!currentSession && currentSession.status === 'active',
+    onTimerFired: useCallback((round: number) => {
+      Alert.alert(
+        `Re-Verification Required (Round ${round})`,
+        `Time for periodic re-scan. Please re-verify flagged students and a random sample.\n\nTap Students to begin.`,
+        [
+          { text: 'Later', style: 'cancel' },
+          { text: 'Start Re-Scan', onPress: () => (navigation as any).navigate('Students', {}) },
+        ]
+      );
+    }, [navigation]),
+  });
+
+  // Guard: if navigated here without required params, redirect back
+  useEffect(() => {
+    if (!examId || !hallId) {
+      navigation.goBack();
+    }
+  }, [examId, hallId, navigation]);
 
   const loadData = useCallback(async () => {
     try {
@@ -92,17 +120,48 @@ const HallSessionScreen: React.FC = () => {
     setRefreshing(false);
   }, [loadData, loadStats]);
 
-  const handleStartSession = useCallback(async () => {
+  const handleStartSession = useCallback(async (force = false) => {
+    if (!examId || !hallId) {
+      Alert.alert('Navigation Error', 'Hall information is missing. Please go back and tap the hall again.');
+      return;
+    }
     setIsStarting(true);
     try {
-      await dispatch(startSessionThunk({ examId, hallId })).unwrap();
+      const result = await dispatch(startSessionThunk({ examId, hallId, force })).unwrap();
+      // Show a brief informational toast if resuming an existing session
+      if ((result as any)?.resumed && !force) {
+        Alert.alert(
+          'Session Resumed',
+          'An existing session for this hall was found and resumed. Tap "Start Fresh" to begin a new one.',
+          [{ text: 'OK' }]
+        );
+      }
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Failed to start session';
-      Alert.alert('Error', msg);
+      let msg = 'Unable to start session. Please try again.';
+      if (typeof e === 'string') msg = e;
+      else if (e && typeof (e as { message?: string }).message === 'string') {
+        msg = (e as { message: string }).message;
+      }
+      Alert.alert('Session Error', msg);
     } finally {
       setIsStarting(false);
     }
   }, [dispatch, examId, hallId]);
+
+  const handleStartFresh = useCallback(() => {
+    Alert.alert(
+      'Start Fresh Session',
+      'This will end the current active session and start a new one. All existing scan records will be kept.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Start Fresh',
+          style: 'destructive',
+          onPress: () => handleStartSession(true),
+        },
+      ]
+    );
+  }, [handleStartSession]);
 
   const handleEndSession = useCallback(() => {
     Alert.alert(
@@ -119,8 +178,9 @@ const HallSessionScreen: React.FC = () => {
             try {
               await dispatch(endSessionThunk(currentSession.id)).unwrap();
               dispatch(clearCurrentSession());
-            } catch {
-              Alert.alert('Error', 'Failed to end session. Please try again.');
+            } catch (endErr: unknown) {
+              const endMsg = typeof endErr === 'string' ? endErr : 'Failed to end session. Please try again.';
+              Alert.alert('Error', endMsg);
             } finally {
               setIsEnding(false);
             }
@@ -196,6 +256,26 @@ const HallSessionScreen: React.FC = () => {
               ))}
             </View>
 
+            {/* Re-verify countdown */}
+            {reVerifyIntervalMins > 0 && (
+              <View style={styles.reVerifyCard}>
+                <Ionicons name="time-outline" size={18} color={Colors.warning} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.reVerifyTitle}>Next Re-Verification</Text>
+                  <Text style={styles.reVerifyTime}>
+                    {nextReVerifyIn > 0
+                      ? `${Math.floor(nextReVerifyIn / 60)}m ${nextReVerifyIn % 60}s`
+                      : 'Due now'}
+                  </Text>
+                </View>
+                {verifyCount > 0 && (
+                  <View style={styles.reVerifyBadge}>
+                    <Text style={styles.reVerifyBadgeText}>{verifyCount} done</Text>
+                  </View>
+                )}
+              </View>
+            )}
+
             {/* Primary action */}
             <TouchableOpacity
               style={styles.primaryBtn}
@@ -210,7 +290,7 @@ const HallSessionScreen: React.FC = () => {
 
             <TouchableOpacity
               style={styles.primaryBtn}
-              onPress={() => navigation.navigate('ScanEntry' as never)}
+              onPress={() => navigation.navigate('Students' as never)}
             >
               <LinearGradient colors={[Colors.success, Colors.successDark]} style={styles.primaryBtnGrad}>
                 <Ionicons name="scan-outline" size={24} color="white" />
@@ -219,21 +299,32 @@ const HallSessionScreen: React.FC = () => {
               </LinearGradient>
             </TouchableOpacity>
 
-            {/* End session */}
-            <TouchableOpacity
-              style={[styles.endSessionBtn, isEnding && styles.btnDisabled]}
-              onPress={handleEndSession}
-              disabled={isEnding}
-            >
-              {isEnding ? (
-                <ActivityIndicator size="small" color={Colors.danger} />
-              ) : (
-                <Ionicons name="stop-circle-outline" size={20} color={Colors.danger} />
-              )}
-              <Text style={styles.endSessionText}>
-                {isEnding ? 'Ending...' : 'End Hall Session'}
-              </Text>
-            </TouchableOpacity>
+            {/* Session management row: End + Start Fresh */}
+            <View style={styles.sessionActions}>
+              <TouchableOpacity
+                style={[styles.endSessionBtn, { flex: 1 }, isEnding && styles.btnDisabled]}
+                onPress={handleEndSession}
+                disabled={isEnding}
+              >
+                {isEnding ? (
+                  <ActivityIndicator size="small" color={Colors.danger} />
+                ) : (
+                  <Ionicons name="stop-circle-outline" size={18} color={Colors.danger} />
+                )}
+                <Text style={styles.endSessionText}>
+                  {isEnding ? 'Ending...' : 'End Session'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.freshSessionBtn, isStarting && styles.btnDisabled]}
+                onPress={handleStartFresh}
+                disabled={isStarting || isEnding}
+              >
+                <Ionicons name="refresh-circle-outline" size={18} color={Colors.warning} />
+                <Text style={styles.freshSessionText}>Start Fresh</Text>
+              </TouchableOpacity>
+            </View>
           </>
         ) : (
           /* ── No active session view ── */
@@ -286,7 +377,7 @@ const HallSessionScreen: React.FC = () => {
             {/* CTA */}
             <TouchableOpacity
               style={[styles.openSessionBtn, isStarting && styles.btnDisabled]}
-              onPress={handleStartSession}
+              onPress={() => handleStartSession(false)}
               disabled={isStarting}
             >
               <LinearGradient colors={[Colors.success, Colors.successDark]} style={styles.openSessionGrad}>
@@ -341,11 +432,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', padding: Spacing.md, gap: Spacing.sm,
   },
   primaryBtnText: { flex: 1, color: 'white', fontSize: FontSizes.md, fontWeight: FontWeights.semibold },
+  // Session management row
+  sessionActions: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm },
+  freshSessionBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, backgroundColor: Colors.warningFaded, borderRadius: BorderRadius.xl,
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.md,
+    borderWidth: 1.5, borderColor: Colors.warning + '50',
+  },
+  freshSessionText: { color: Colors.warning, fontSize: FontSizes.sm, fontWeight: FontWeights.semibold },
   // End session
   endSessionBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: Spacing.sm, backgroundColor: Colors.dangerFaded, borderRadius: BorderRadius.xl,
-    padding: Spacing.md, borderWidth: 1.5, borderColor: Colors.danger + '40', marginTop: Spacing.sm,
+    padding: Spacing.md, borderWidth: 1.5, borderColor: Colors.danger + '40',
   },
   endSessionText: { color: Colors.danger, fontSize: FontSizes.md, fontWeight: FontWeights.semibold },
   // Info cards
@@ -373,6 +473,19 @@ const styles = StyleSheet.create({
   },
   openSessionText: { color: 'white', fontSize: FontSizes.lg, fontWeight: FontWeights.bold },
   btnDisabled: { opacity: 0.6 },
+  // Re-verify timer card
+  reVerifyCard: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    backgroundColor: Colors.warningFaded, borderRadius: BorderRadius.lg,
+    padding: Spacing.md, borderWidth: 1, borderColor: Colors.warning + '40',
+  },
+  reVerifyTitle: { fontSize: FontSizes.xs, color: Colors.textSecondary, fontWeight: FontWeights.medium },
+  reVerifyTime: { fontSize: FontSizes.lg, fontWeight: FontWeights.bold, color: Colors.warning },
+  reVerifyBadge: {
+    backgroundColor: Colors.warning, paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: BorderRadius.full,
+  },
+  reVerifyBadgeText: { fontSize: FontSizes.xs, color: 'white', fontWeight: FontWeights.bold },
 });
 
 export default HallSessionScreen;

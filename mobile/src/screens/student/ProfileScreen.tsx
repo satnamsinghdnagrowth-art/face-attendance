@@ -315,7 +315,7 @@ const ProfileScreen: React.FC = () => {
               <Text style={styles.logoutText}>Sign Out</Text>
             </TouchableOpacity>
 
-            <Text style={styles.version}>FaceAttend v1.0.0</Text>
+            <Text style={styles.version}>ExamGuard v2.0.0</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

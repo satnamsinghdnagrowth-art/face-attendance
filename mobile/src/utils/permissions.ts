@@ -9,7 +9,7 @@ export const requestCameraPermission = async (): Promise<boolean> => {
   if (status !== 'granted') {
     Alert.alert(
       'Camera Permission Required',
-      'FaceAttend needs camera access for face recognition. Please enable it in your device settings.',
+      'ExamGuard needs camera access for face identity verification. Please enable it in your device settings.',
       [{ text: 'OK' }]
     );
     return false;
@@ -45,11 +45,13 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
   }
 
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('attendance', {
-      name: 'Attendance Notifications',
+    await Notifications.setNotificationChannelAsync('examguard_alerts', {
+      name: 'ExamGuard Alerts',
+      description: 'Critical exam alerts, proxy detections, and session updates',
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#2563EB',
+      sound: 'default',
     });
   }
 

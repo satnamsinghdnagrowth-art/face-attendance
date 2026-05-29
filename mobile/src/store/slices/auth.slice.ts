@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import { authApi } from '@/api/auth.api';
 import { setAuthToken } from '@/api/client';
 import { User } from '@/types';
-import socketService from '@/services/socket.service';
+// Socket lifecycle is managed by socketMiddleware — NOT inside reducers
 
 export interface AuthState {
   user: User | null;
@@ -175,11 +175,7 @@ const authSlice = createSlice({
         state.refreshToken = action.payload.refresh_token;
         state.isAuthenticated = true;
         state.error = null;
-        socketService.connect(action.payload.access_token);
-        // Students auto-join their class room for attendance notifications
-        if (action.payload.user?.class_id) {
-          socketService.joinClassRoom(action.payload.user.class_id);
-        }
+        // Socket connect is handled by socketMiddleware — keep this reducer pure
       })
       .addCase(loginThunk.rejected, (state, action) => {
         state.isLoading = false;
@@ -199,7 +195,7 @@ const authSlice = createSlice({
         state.refreshToken = null;
         state.isAuthenticated = false;
         state.error = null;
-        socketService.disconnect();
+        // Socket disconnect is handled by socketMiddleware
       })
       .addCase(logoutThunk.rejected, (state) => {
         state.isLoading = false;
@@ -235,10 +231,7 @@ const authSlice = createSlice({
           state.accessToken = action.payload.access_token;
           state.refreshToken = action.payload.refresh_token;
           state.isAuthenticated = true;
-          socketService.connect(action.payload.access_token);
-          if (action.payload.user?.class_id) {
-            socketService.joinClassRoom(action.payload.user.class_id);
-          }
+          // Socket connect is handled by socketMiddleware
         }
       })
       .addCase(initializeAuthThunk.rejected, (state) => {

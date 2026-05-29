@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAppDispatch, useAppSelector } from '@/store';
 import { initializeAuthThunk } from '@/store/slices/auth.slice';
@@ -17,8 +17,15 @@ export const AppNavigator: React.FC = () => {
   const dispatch = useAppDispatch();
   const { isAuthenticated, isInitialized, user } = useAppSelector((state) => state.auth);
 
+  // Guard against double-dispatch on re-renders. useRef persists across renders
+  // without causing them, unlike useState.
+  const hasInitialized = useRef(false);
+
   useEffect(() => {
-    dispatch(initializeAuthThunk());
+    if (!hasInitialized.current) {
+      hasInitialized.current = true;
+      dispatch(initializeAuthThunk());
+    }
   }, [dispatch]);
 
   if (!isInitialized) {
@@ -38,6 +45,7 @@ export const AppNavigator: React.FC = () => {
       ) : user.role === 'hall_invigilator' ? (
         <Stack.Screen name="Invigilator" component={InvigilatorNavigator} />
       ) : (
+        // admin / super_admin
         <Stack.Screen name="Admin" component={AdminNavigator} />
       )}
     </Stack.Navigator>

@@ -1,9 +1,21 @@
 import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
+import socketService from '@/services/socket.service';
 
-// Your backend machine's local network IP — phone must be on same WiFi
+// ─── API URL Configuration ────────────────────────────────────────────────────
+// Option A: Render production server (ensure migrations have been run on Render)
 export const API_BASE_URL = 'https://face-attendance-9kza.onrender.com/api';
+// Option B: Local development (replace 192.168.x.x with your machine's WiFi IP)
 // export const API_BASE_URL = 'http://localhost:3030/api';
+// Option C: Android emulator only
+// export const API_BASE_URL = 'http://10.0.2.2:3030/api';
+
+// Callback registered by the app to handle full session expiry (navigate to login)
+let onSessionExpired: (() => void) | null = null;
+export const setOnSessionExpired = (cb: () => void): void => {
+  onSessionExpired = cb;
+};
+
 let isRefreshing = false;
 let failedQueue: Array<{
   resolve: (value: string | null) => void;
@@ -84,6 +96,9 @@ apiClient.interceptors.response.use(
           await SecureStore.setItemAsync('refresh_token', newRefreshToken);
         }
 
+        // Keep the socket authenticated with the new token
+        socketService.updateToken(access_token);
+
         processQueue(null, access_token);
 
         if (originalRequest.headers) {
@@ -92,10 +107,10 @@ apiClient.interceptors.response.use(
         return apiClient(originalRequest);
       } catch (refreshError) {
         processQueue(refreshError as AxiosError, null);
-        // Clear tokens and trigger logout
         await SecureStore.deleteItemAsync('access_token');
         await SecureStore.deleteItemAsync('refresh_token');
-        // The navigation reset will happen via the auth state change in the store
+        // Notify the app so it can dispatch logout and navigate to login
+        onSessionExpired?.();
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;

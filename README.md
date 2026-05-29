@@ -659,39 +659,96 @@ Socket.IO event → all connected clients see live update
 
 ## 11. User Roles & Default Credentials
 
-| Role | Capabilities |
-|---|---|
-| `super_admin` | Full access — manage multiple schools, subscriptions, AI settings |
-| `admin` | Manage students, teachers, classes, view all reports |
-| `teacher` | Start sessions, live scan, review + override attendance |
-| `student` | Enroll face, view own attendance, submit leave requests |
+### All Roles
 
-### Default Login (created by migration)
+| Role | Mobile Navigator | Capabilities |
+|---|---|---|
+| `super_admin` | Admin tabs | Full system access — manage everything |
+| `admin` | Admin tabs | Manage students, teachers, classes, exams, reports |
+| `chief_examiner` | Exam tabs (5 tabs) | Create exams, live monitoring dashboard, alert review, flag cases |
+| `hall_invigilator` | Invigilator tabs (3 tabs) | Manage assigned hall, scan students at entry, re-verify |
+| `teacher` | Teacher tabs | Start attendance sessions, live face scan, reports |
+| `student` | Student tabs | Enroll face, view own attendance, submit leave requests |
+
+---
+
+### All Test Accounts (after running `npm run migrate`)
+
+> All seeded accounts use password: **`password123`**  
+> Super Admin uses password: **`Admin@123`**
+
+#### System Accounts
+
+| Role | Name | Email | Password | Notes |
+|---|---|---|---|---|
+| `super_admin` | Super Admin | `admin@school.com` | `Admin@123` | Created by `001_init.sql` — change on first login |
+| `admin` | Test Admin | `admin@test.com` | `password123` | Created by `002_seed_test_users.sql` |
+| `teacher` | Test Teacher | `teacher@test.com` | `password123` | Assigned to CS-A and IT-B classes |
+| `student` | Test Student | `student@test.com` | `password123` | Enrolled in Hall B (Seat B-03) of CS-FINAL-2026 |
+
+#### Exam Monitoring Accounts (created by `005_seed_exam_data.sql`)
+
+| Role | Name | Email | Password | Assignment |
+|---|---|---|---|---|
+| `chief_examiner` | Chief Examiner | `chief@exam.com` | `password123` | Oversees CS-FINAL-2026 |
+| `hall_invigilator` | Hall Invigilator A | `invig.a@exam.com` | `password123` | Hall A — Main Block, Ground Floor |
+| `hall_invigilator` | Hall Invigilator B | `invig.b@exam.com` | `password123` | Hall B — Main Block, First Floor |
+| `student` | Alice Johnson | `alice@student.com` | `password123` | Hall A, Seat A-01 |
+| `student` | Bob Smith | `bob@student.com` | `password123` | Hall A, Seat A-02 |
+| `student` | Carol White | `carol@student.com` | `password123` | Hall A, Seat A-03 |
+| `student` | David Brown | `david@student.com` | `password123` | Hall B, Seat B-01 |
+| `student` | Eva Green | `eva@student.com` | `password123` | Hall B, Seat B-02 |
+
+#### Quick Login Reference for Mobile App Testing
+
+```
+── Attendance System ─────────────────────────────────────
+Admin panel:        admin@school.com    / Admin@123
+Teacher dashboard:  teacher@test.com    / password123
+Student view:       student@test.com    / password123
+
+── Exam Monitoring ───────────────────────────────────────
+Chief Examiner:     chief@exam.com      / password123
+Invigilator (A):    invig.a@exam.com    / password123
+Invigilator (B):    invig.b@exam.com    / password123
+Exam student:       alice@student.com   / password123
+```
+
+#### Seeded Exam: CS-FINAL-2026
 
 | Field | Value |
 |---|---|
-| Email | `admin@school.com` |
-| Password | `Admin@123` |
-| Role | `super_admin` |
+| Title | Computer Science Final Examination 2026 |
+| Exam Code | `CS-FINAL-2026` |
+| Date | 2026-06-15, 09:00 – 12:00 (3 hours) |
+| Status | `scheduled` (start via ExamDetail screen) |
+| Face Threshold | 0.85 (verified) |
+| Flag Threshold | 0.70 (flagged → manual review) |
+| Hall A | 3 students: Alice, Bob, Carol (Invigilator A) |
+| Hall B | 3 students: David, Eva, Test Student (Invigilator B) |
 
-> **Important:** Change the default password immediately after first login.
+> **Note:** Students must enroll their face via the Face ID tab before  
+> verification will work. Use `POST /api/face/register` with a face image.
+
+---
 
 ### Creating Additional Users
 
 After logging in as admin, use the Register API:
 
 ```bash
-curl -X POST http://localhost:3000/api/auth/register \
+curl -X POST http://localhost:3030/api/auth/register \
   -H "Authorization: Bearer <your_access_token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "Alice Johnson",
-    "email": "alice@school.com",
+    "name": "New Teacher",
+    "email": "newteacher@school.com",
     "password": "SecurePass123",
-    "phone": "+1-555-0101",
     "role": "teacher"
   }'
 ```
+
+Valid roles: `super_admin`, `admin`, `chief_examiner`, `hall_invigilator`, `teacher`, `student`
 
 ---
 

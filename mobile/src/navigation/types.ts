@@ -113,6 +113,7 @@ export type ExamTabParamList = {
   ExamLive: undefined;
   ExamAlerts: undefined;
   ExamReview: undefined;
+  ExamProfile: undefined;   // profile + logout for chief_examiner
 };
 
 export type ExamStackParamList = {
@@ -121,13 +122,13 @@ export type ExamStackParamList = {
   CreateExam: undefined;
   HallSetup: { examId: string };
   FlaggedCases: { examId: string };
-  ComplianceReport: { examId: string };
+  ComplianceReport: { examId: string }; // examId required — screen fetches exam data
 };
 
 export type InvigilatorTabParamList = {
   MyHall: undefined;
-  ScanEntry: { sessionId?: string; examId?: string; hallId?: string };
   Students: undefined;
+  Profile: undefined;   // profile + logout for hall_invigilator
 };
 
 export type InvigilatorStackParamList = {

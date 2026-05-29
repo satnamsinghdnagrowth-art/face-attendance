@@ -72,13 +72,24 @@ export const loadExamThunk = createAsyncThunk(
 
 export const startSessionThunk = createAsyncThunk(
   'exam/startSession',
-  async (params: { examId: string; hallId: string }, { rejectWithValue }) => {
+  async (params: { examId: string; hallId: string; force?: boolean }, { rejectWithValue }) => {
+    if (!params.examId || !params.hallId) {
+      return rejectWithValue('Exam ID and Hall ID are required. Please navigate from My Hall screen.');
+    }
     try {
-      const response = await examApi.startSession(params.examId, params.hallId);
+      const response = await examApi.startSession(params.examId, params.hallId, params.force ?? false);
       return response.data.data;
     } catch (error: unknown) {
-      const err = error as { response?: { data?: { message?: string } } };
-      return rejectWithValue(err?.response?.data?.message || 'Failed to start session');
+      const axiosErr = error as {
+        response?: { data?: { message?: string; error?: string }; status?: number };
+        message?: string;
+      };
+      const msg =
+        axiosErr?.response?.data?.message ||
+        axiosErr?.response?.data?.error ||
+        axiosErr?.message ||
+        'Unable to start session. Please check your connection and try again.';
+      return rejectWithValue(msg);
     }
   }
 );
@@ -131,6 +142,22 @@ export const loadAlertsThunk = createAsyncThunk(
     } catch (error: unknown) {
       const err = error as { response?: { data?: { message?: string } } };
       return rejectWithValue(err?.response?.data?.message || 'Failed to load alerts');
+    }
+  }
+);
+
+export const updateExamStatusThunk = createAsyncThunk(
+  'exam/updateStatus',
+  async (
+    { examId, status }: { examId: string; status: 'active' | 'completed' | 'cancelled' },
+    { rejectWithValue }
+  ) => {
+    try {
+      const response = await examApi.updateExamStatus(examId, status);
+      return response.data.data;
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { message?: string } } };
+      return rejectWithValue(err?.response?.data?.message || 'Failed to update exam status');
     }
   }
 );
@@ -281,6 +308,23 @@ const examSlice = createSlice({
       })
       .addCase(loadAlertsThunk.rejected, (state, action) => {
         state.isLoading = false;
+        state.error = action.payload as string;
+      });
+
+    // Update exam status (start / cancel / complete)
+    builder
+      .addCase(updateExamStatusThunk.fulfilled, (state, action) => {
+        // Update status in the local exams list if present
+        const idx = state.exams.findIndex((e) => e.id === action.payload.id);
+        if (idx !== -1) {
+          state.exams[idx] = { ...state.exams[idx], ...action.payload } as typeof state.exams[number];
+        }
+        // Also update currentExam if it's the same exam
+        if (state.currentExam?.id === action.payload.id) {
+          state.currentExam = { ...state.currentExam, ...action.payload };
+        }
+      })
+      .addCase(updateExamStatusThunk.rejected, (state, action) => {
         state.error = action.payload as string;
       });
   },

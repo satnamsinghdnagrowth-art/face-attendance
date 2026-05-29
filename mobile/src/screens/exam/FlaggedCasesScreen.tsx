@@ -12,8 +12,6 @@ import { Colors } from '@/constants/colors';
 import { BorderRadius, FontSizes, FontWeights, Shadow, Spacing } from '@/constants/theme';
 import { ExamStackParamList } from '@/navigation/types';
 
-type RouteParams = RouteProp<ExamStackParamList, 'FlaggedCases'>;
-
 type FilterType = 'all' | 'pending' | 'reviewed';
 
 const VERDICT_CONFIG: Record<string, { color: string; bg: string }> = {
@@ -24,8 +22,9 @@ const VERDICT_CONFIG: Record<string, { color: string; bg: string }> = {
 
 const FlaggedCasesScreen: React.FC = () => {
   const navigation = useNavigation();
-  const route = useRoute<RouteParams>();
-  const { examId } = route.params;
+  // route.params is undefined when rendered as a tab (ExamReview) — handle gracefully
+  const route = useRoute();
+  const examId: string | undefined = (route.params as { examId?: string } | undefined)?.examId;
 
   const [events, setEvents] = useState<VerificationEvent[]>([]);
   const [filter, setFilter] = useState<FilterType>('pending');
@@ -33,34 +32,62 @@ const FlaggedCasesScreen: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
 
-  // We load all sessions for this exam and get flagged events
-  // For simplicity we'll use the active alerts approach
+  // When examId is provided (stack context), load events for that exam.
+  // When no examId (tab context), load alerts from all active exams to surface
+  // flagged/rejected events across the board.
   const loadEvents = useCallback(async () => {
     try {
-      // Get exam stats to find sessions, then get events per session
-      const examRes = await examApi.getExam(examId);
-      const halls = examRes.data.data.halls;
+      if (examId) {
+        // Stack context — specific exam
+        const alertsRes = await examApi.getAlerts(examId);
+        const alertEvents: VerificationEvent[] = alertsRes.data.data
+          .filter((a) => a.event_id && a.student_id)
+          .map((a) => ({
+            id: a.event_id ?? a.id,
+            exam_session_id: '',
+            exam_id: a.exam_id,
+            student_id: a.student_id ?? '',
+            student_name: a.student_name ?? 'Unknown',
+            scan_type: 'entry',
+            confidence_score: 0,
+            verdict: a.alert_type === 'proxy_suspect' ? 'proxy_suspect' : 'flagged',
+            scanned_at: a.created_at,
+          }));
+        setEvents(alertEvents);
+      } else {
+        // Tab context — load flags from all active exams
+        const examsRes = await examApi.listExams({ status: 'active' });
+        const rd = examsRes.data.data;
+        const activeExams = Array.isArray(rd) ? rd : (rd as unknown as { exams: { id: string }[] })?.exams ?? [];
 
-      // Collect all verification events across all halls
-      const allEvents: VerificationEvent[] = [];
-      for (const hall of halls) {
-        try {
-          // We need session IDs — use a workaround via alerts or sessions
-          // For MVP, we'll get session students per hall to get session IDs
-          // This is a simplified approach; production would have a dedicated endpoint
-        } catch {}
+        const allAlerts: VerificationEvent[] = [];
+        await Promise.all(
+          (activeExams as { id: string }[]).map(async (exam) => {
+            try {
+              const alertsRes = await examApi.getAlerts(exam.id);
+              const flagAlerts = alertsRes.data.data
+                .filter((a) => !a.is_resolved && a.student_id)
+                .map((a) => ({
+                  id: a.event_id ?? a.id,
+                  exam_session_id: '',
+                  exam_id: a.exam_id,
+                  student_id: a.student_id ?? '',
+                  student_name: a.student_name ?? 'Unknown',
+                  scan_type: 'entry',
+                  confidence_score: 0,
+                  verdict: a.alert_type === 'proxy_suspect' ? 'proxy_suspect' : 'flagged',
+                  scanned_at: a.created_at,
+                }));
+              allAlerts.push(...flagAlerts);
+            } catch {
+              // skip failed exams
+            }
+          })
+        );
+        setEvents(allAlerts);
       }
-
-      // For now, load from alerts which have event_ids
-      const alertsRes = await examApi.getAlerts(examId);
-      const alerts = alertsRes.data.data;
-      const eventIds = alerts.map((a) => a.event_id).filter(Boolean) as string[];
-
-      // Since we don't have a bulk "get events by IDs" endpoint in MVP,
-      // we display the alerts as proxy for flagged events with available data
-      setEvents(allEvents);
     } catch {
-      // keep previous
+      // keep previous data
     } finally {
       setIsLoading(false);
     }

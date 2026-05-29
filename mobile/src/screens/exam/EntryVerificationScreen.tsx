@@ -118,7 +118,27 @@ const EntryVerificationScreen: React.FC = () => {
   );
 
   const handleScan = useCallback(async () => {
-    if (isScanningRef.current || !sessionId || !cameraRef.current || !cameraReady) return;
+    if (isScanningRef.current || !cameraRef.current || !cameraReady) return;
+
+    // Guard: session must be active before scanning
+    if (!sessionId) {
+      Alert.alert(
+        'No Active Session',
+        'Please start a hall session first before scanning students.',
+        [{ text: 'OK', onPress: () => navigation.goBack() }]
+      );
+      return;
+    }
+
+    // Guard: a student must be selected
+    if (!studentId) {
+      Alert.alert(
+        'No Student Selected',
+        'Please go back to the Students list and tap a student name to begin verification.',
+        [{ text: 'Go to Students', onPress: () => navigation.navigate('Students' as never) }]
+      );
+      return;
+    }
 
     isScanningRef.current = true;
     setIsScanning(true);
@@ -130,7 +150,10 @@ const EntryVerificationScreen: React.FC = () => {
         exif: false,
       });
 
-      if (!photo?.uri) return;
+      if (!photo?.uri) {
+        Alert.alert('Camera Error', 'Failed to capture photo. Please try again.');
+        return;
+      }
 
       const formData = new FormData();
       formData.append('face_image', {
@@ -139,8 +162,9 @@ const EntryVerificationScreen: React.FC = () => {
         name: 'face.jpg',
       } as any);
       formData.append('exam_session_id', sessionId);
-      if (studentId) formData.append('student_id', studentId);
+      formData.append('student_id', studentId);
       formData.append('scan_type', 'entry');
+      // Send a zero-vector embedding; the backend prefers server-side embedding from the image
       formData.append('embedding', JSON.stringify(new Array(128).fill(0)));
 
       if (idCardMode && idCardUri) {
@@ -154,13 +178,26 @@ const EntryVerificationScreen: React.FC = () => {
       const res = await examApi.verifyEntry(formData);
       const result: VerificationResult = res.data?.data || res.data;
       showVerdictOverlay(result);
-    } catch (e: any) {
-      Alert.alert('Scan Failed', e?.message || 'Unable to verify. Please try again.');
+    } catch (e: unknown) {
+      // Extract the actual error message from axios 400/500 responses
+      const axiosErr = e as { response?: { data?: { message?: string; errors?: Array<{ message: string }> } }; message?: string };
+      const serverMsg =
+        axiosErr?.response?.data?.message ||
+        axiosErr?.response?.data?.errors?.[0]?.message ||
+        axiosErr?.message;
+
+      if (serverMsg?.includes('exam_session_id') || serverMsg?.includes('session')) {
+        Alert.alert('Session Error', 'No active session found. Please start a hall session first.');
+      } else if (serverMsg?.includes('student_id') || serverMsg?.includes('student')) {
+        Alert.alert('Student Error', 'Student information is missing. Please select a student from the list.');
+      } else {
+        Alert.alert('Scan Failed', serverMsg || 'Unable to verify. Please try again.');
+      }
     } finally {
       setIsScanning(false);
       isScanningRef.current = false;
     }
-  }, [sessionId, studentId, cameraRef, cameraReady, idCardMode, idCardUri, showVerdictOverlay]);
+  }, [sessionId, studentId, cameraRef, cameraReady, idCardMode, idCardUri, showVerdictOverlay, navigation]);
 
   const handleCaptureIdCard = useCallback(async () => {
     if (!cameraRef.current || !cameraReady) return;
@@ -342,14 +379,22 @@ const EntryVerificationScreen: React.FC = () => {
           <TouchableOpacity
             style={[
               styles.scanButton,
-              (!cameraReady || isScanning) && styles.scanButtonDisabled,
+              (!cameraReady || isScanning || !studentId || !sessionId) && styles.scanButtonDisabled,
             ]}
             onPress={handleScan}
             disabled={!cameraReady || isScanning}
           >
             <Ionicons name="scan" size={28} color="white" />
             <Text style={styles.scanButtonText}>
-              {!cameraReady ? 'Camera loading...' : isScanning ? 'Verifying...' : 'Scan to Verify'}
+              {!sessionId
+                ? 'No active session'
+                : !studentId
+                  ? 'Select student first'
+                  : !cameraReady
+                    ? 'Camera loading...'
+                    : isScanning
+                      ? 'Verifying...'
+                      : 'Scan to Verify'}
             </Text>
           </TouchableOpacity>
         )}

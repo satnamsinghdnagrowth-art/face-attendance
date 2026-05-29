@@ -103,13 +103,19 @@ const SplashScreen: React.FC = () => {
 
       {/* App name */}
       <Animated.View style={{ opacity: textOpacity, alignItems: 'center' }}>
-        <Text style={styles.appName}>FaceAttend</Text>
-        <Text style={styles.tagline}>Smart Attendance System</Text>
+        <Text style={styles.appName}>ExamGuard</Text>
+        <Text style={styles.tagline}>Secure Exam Monitoring</Text>
+        <Text style={styles.taglineSub}>Identity Verification & Anti-Proxy Detection</Text>
 
         <View style={styles.featuresRow}>
-          {['Face Recognition', 'Real-time', 'Secure'].map((feature, i) => (
-            <View key={i} style={styles.featurePill}>
-              <Text style={styles.featureText}>{feature}</Text>
+          {[
+            { icon: 'shield-checkmark-outline', label: 'Anti-Proxy' },
+            { icon: 'scan-outline',             label: 'Face ID'    },
+            { icon: 'pulse-outline',            label: 'Live Monitor'},
+          ].map(({ icon, label }) => (
+            <View key={label} style={styles.featurePill}>
+              <Ionicons name={icon as never} size={12} color="rgba(255,255,255,0.9)" />
+              <Text style={styles.featureText}>{label}</Text>
             </View>
           ))}
         </View>
@@ -118,7 +124,7 @@ const SplashScreen: React.FC = () => {
       {/* Loading indicator */}
       <Animated.View style={[styles.loaderContainer, { opacity: loaderOpacity }]}>
         <ActivityIndicator size="small" color="rgba(255,255,255,0.8)" />
-        <Text style={styles.loadingText}>Initializing...</Text>
+        <Text style={styles.loadingText}>Initializing secure session...</Text>
       </Animated.View>
 
       {/* Bottom version */}
@@ -172,33 +178,47 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.display,
     fontWeight: FontWeights.extrabold,
     color: 'white',
-    letterSpacing: 1,
-    marginBottom: 8,
+    letterSpacing: 1.5,
+    marginBottom: 6,
+    textShadowColor: 'rgba(0,0,0,0.25)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 6,
   },
   tagline: {
     fontSize: FontSizes.lg,
-    color: 'rgba(255,255,255,0.8)',
-    fontWeight: FontWeights.medium,
+    color: 'rgba(255,255,255,0.9)',
+    fontWeight: FontWeights.semibold,
+    marginBottom: 4,
+    letterSpacing: 0.4,
+  },
+  taglineSub: {
+    fontSize: FontSizes.sm,
+    color: 'rgba(255,255,255,0.6)',
+    fontWeight: FontWeights.regular,
     marginBottom: Spacing.lg,
-    letterSpacing: 0.5,
+    letterSpacing: 0.2,
   },
   featuresRow: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: Spacing.sm,
+    marginTop: Spacing.xs,
   },
   featurePill: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(255,255,255,0.12)',
     paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderColor: 'rgba(255,255,255,0.18)',
   },
   featureText: {
     color: 'rgba(255,255,255,0.9)',
     fontSize: FontSizes.xs,
-    fontWeight: FontWeights.medium,
+    fontWeight: FontWeights.semibold,
+    letterSpacing: 0.3,
   },
   loaderContainer: {
     position: 'absolute',

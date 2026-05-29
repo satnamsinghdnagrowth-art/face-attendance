@@ -210,3 +210,33 @@ export interface ChartDataPoint {
   value: number;
   label?: string;
 }
+
+// ─── Exam Monitoring Socket Payloads ─────────────────────────────────────────
+// Mirror of backend/src/types/index.ts — keep in sync
+
+export type VerificationVerdict = 'verified' | 'flagged' | 'rejected' | 'no_match' | 'proxy_suspect';
+export type AlertSeverityLevel = 'low' | 'medium' | 'high' | 'critical';
+
+export interface SocketExamAlertPayload {
+  alertId: string;
+  examId: string;
+  hallId?: string;
+  eventId?: string;
+  studentId?: string;
+  studentName?: string;
+  alertType: string;
+  severity: AlertSeverityLevel;
+  message: string;
+}
+
+export interface SocketVerificationPayload {
+  eventId: string;
+  examId: string;
+  hallId: string;
+  studentId: string;
+  studentName: string;
+  verdict: VerificationVerdict;
+  confidence: number;
+  scanType: string;
+  scannedAt: Date | string;
+}
