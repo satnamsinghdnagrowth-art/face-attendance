@@ -191,16 +191,16 @@ const LoginScreen: React.FC = () => {
             <View style={styles.hintsContainer}>
               <Text style={styles.hintsTitle}>Default test accounts</Text>
               {[
-                { role: 'Student', email: 'alice@student.com', icon: 'school-outline' },
-                { role: 'Investigator', email: 'invig.a@exam.com', icon: 'person-outline' },
-                { role: 'Admin', email: 'admin@school.com', icon: 'shield-outline' },
-              ].map(({ role, email: hintEmail, icon }) => (
+                { role: 'Student',     email: 'alice@student.com', password: 'password123', icon: 'school-outline' },
+                { role: 'Invigilator', email: 'invig.a@exam.com',  password: 'password123', icon: 'person-outline' },
+                { role: 'Admin',       email: 'admin@school.com',  password: 'Admin@123',   icon: 'shield-outline' },
+              ].map(({ role, email: hintEmail, password: hintPassword, icon }) => (
                 <TouchableOpacity
                   key={role}
                   style={styles.hintItem}
                   onPress={() => {
                     setEmail(hintEmail);
-                    setPassword('password123');
+                    setPassword(hintPassword);
                     setEmailError('');
                     setPasswordError('');
                   }}

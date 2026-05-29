@@ -53,5 +53,6 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
 
-# Start application
-CMD ["node", "dist/server.js"]
+# Start application — run pending migrations first (idempotent), then start server.
+# NODE_OPTIONS flag prevents IPv4/IPv6 auto-selection issues on Render.com.
+CMD ["sh", "-c", "NODE_OPTIONS=--no-network-family-autoselection node dist/migrations/migrate.js && NODE_OPTIONS=--no-network-family-autoselection node dist/server.js"]
