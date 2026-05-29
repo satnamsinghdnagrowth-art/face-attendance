@@ -1,6 +1,7 @@
 import { Response, NextFunction, Request } from 'express';
 import { body } from 'express-validator';
 import { AuthRequest } from '../types';
+import { validateUUID } from '../utils/uuid.validator';
 import { authService } from '../services/auth.service';
 import { query } from '../config/database';
 import { hashPassword, comparePassword } from '../utils/encryption';
@@ -62,8 +63,7 @@ export const forgotPasswordValidators = [
 export const resetPasswordValidators = [
   body('userId')
     .notEmpty()
-    .isUUID()
-    .withMessage('Valid user ID is required'),
+    .custom(validateUUID('userId')),
   body('otp')
     .notEmpty()
     .isLength({ min: 6, max: 6 })
@@ -78,8 +78,7 @@ export const resetPasswordValidators = [
 export const verifyOTPValidators = [
   body('userId')
     .notEmpty()
-    .isUUID()
-    .withMessage('Valid user ID is required'),
+    .custom(validateUUID('userId')),
   body('otp')
     .notEmpty()
     .isLength({ min: 6, max: 6 })

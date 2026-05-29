@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { body, query as queryValidator, param } from 'express-validator';
 import { AuthRequest, UserRole, PublicUser } from '../types';
+import { validateUUID } from '../utils/uuid.validator';
 import { query } from '../config/database';
 import {
   successResponse,
@@ -35,7 +36,7 @@ export const listUsersValidators = [
 ];
 
 export const updateUserValidators = [
-  param('id').isUUID().withMessage('Invalid user ID'),
+  param('id').custom(validateUUID('id')),
   body('name')
     .optional()
     .trim()

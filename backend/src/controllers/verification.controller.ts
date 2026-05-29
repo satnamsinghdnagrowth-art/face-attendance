@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { body } from 'express-validator';
 import { AuthRequest } from '../types';
+import { validateUUID } from '../utils/uuid.validator';
 import { verificationService, VerifyParams } from '../services/verification.service';
 import { examAlertService } from '../services/exam.alert.service';
 import { computeImageEmbedding } from '../utils/face.utils';
@@ -14,10 +15,10 @@ import logger from '../utils/logger';
 export const entryVerifyValidators = [
   body('exam_session_id')
     .notEmpty().withMessage('exam_session_id is required — start a hall session first')
-    .isUUID().withMessage('exam_session_id must be a valid UUID'),
+    .custom(validateUUID('exam_session_id')),
   body('student_id')
     .notEmpty().withMessage('student_id is required — select a student from the list before scanning')
-    .isUUID().withMessage('student_id must be a valid UUID'),
+    .custom(validateUUID('student_id')),
   // embedding is optional: the server generates it from face_image via computeImageEmbedding.
   // A client-supplied value is used only as a fallback when server-side extraction fails.
   body('embedding')
@@ -41,10 +42,10 @@ export const entryVerifyValidators = [
 export const reVerifyValidators = [
   body('exam_session_id')
     .notEmpty().withMessage('exam_session_id is required')
-    .isUUID().withMessage('exam_session_id must be a valid UUID'),
+    .custom(validateUUID('exam_session_id')),
   body('student_id')
     .notEmpty().withMessage('student_id is required')
-    .isUUID().withMessage('student_id must be a valid UUID'),
+    .custom(validateUUID('student_id')),
   body('embedding')
     .optional({ nullable: true, checkFalsy: true })
     .custom((value: unknown) => {

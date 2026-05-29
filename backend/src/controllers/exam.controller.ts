@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Response, NextFunction } from 'express';
 import { body, param, query as queryValidator } from 'express-validator';
 import { AuthRequest } from '../types';
+import { validateUUID } from '../utils/uuid.validator';
 import { examService } from '../services/exam.service';
 import { examAlertService } from '../services/exam.alert.service';
 import {
@@ -19,7 +20,7 @@ import logger from '../utils/logger';
 export const createExamValidators = [
   body('title').notEmpty().isString().withMessage('Exam title is required'),
   body('exam_code').notEmpty().isString().withMessage('Exam code is required'),
-  body('subject_id').optional().isUUID().withMessage('subject_id must be a valid UUID'),
+  body('subject_id').optional().custom(validateUUID('subject_id')),
   body('scheduled_start').notEmpty().isISO8601().withMessage('scheduled_start must be a valid ISO8601 date'),
   body('scheduled_end').notEmpty().isISO8601().withMessage('scheduled_end must be a valid ISO8601 date'),
   body('duration_mins').notEmpty().isInt({ min: 1 }).withMessage('duration_mins must be a positive integer'),
@@ -32,14 +33,14 @@ export const createExamValidators = [
 export const createHallValidators = [
   body('hall_name').notEmpty().isString().withMessage('Hall name is required'),
   body('capacity').notEmpty().isInt({ min: 1 }).withMessage('Capacity must be a positive integer'),
-  body('invigilator_id').optional().isUUID().withMessage('invigilator_id must be a valid UUID'),
+  body('invigilator_id').optional().custom(validateUUID('invigilator_id')),
   body('floor').optional().isString().withMessage('floor must be a string'),
   body('building').optional().isString().withMessage('building must be a string'),
 ];
 
 export const enrollStudentsValidators = [
   body('students').isArray({ min: 1 }).withMessage('students must be a non-empty array'),
-  body('students.*.student_id').notEmpty().isUUID().withMessage('Each student_id must be a valid UUID'),
+  body('students.*.student_id').notEmpty().custom(validateUUID('student_id')),
   body('students.*.seat_number').optional().isString().withMessage('seat_number must be a string'),
   body('students.*.roll_number').optional().isString().withMessage('roll_number must be a string'),
 ];

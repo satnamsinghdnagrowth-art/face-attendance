@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { body, param, query as queryValidator } from 'express-validator';
 import { AuthRequest, AttendanceStatus, GPSLocation } from '../types';
+import { validateUUID } from '../utils/uuid.validator';
 import { query as dbQuery } from '../config/database';
 import { attendanceService } from '../services/attendance.service';
 import { faceService } from '../services/face.service';
@@ -19,16 +20,16 @@ import logger from '../utils/logger';
 
 // ─── Validators ───────────────────────────────────────────────────────────────
 export const startSessionValidators = [
-  body('class_id').notEmpty().isUUID().withMessage('Valid class ID is required'),
-  body('subject_id').notEmpty().isUUID().withMessage('Valid subject ID is required'),
+  body('class_id').notEmpty().custom(validateUUID('class_id')),
+  body('subject_id').notEmpty().custom(validateUUID('subject_id')),
   body('location.latitude').optional().isFloat({ min: -90, max: 90 }).withMessage('Invalid latitude'),
   body('location.longitude').optional().isFloat({ min: -180, max: 180 }).withMessage('Invalid longitude'),
   body('notes').optional().isString().isLength({ max: 500 }),
 ];
 
 export const markAttendanceValidators = [
-  body('session_id').notEmpty().isUUID().withMessage('Valid session ID is required'),
-  body('student_id').notEmpty().isUUID().withMessage('Valid student ID is required'),
+  body('session_id').notEmpty().custom(validateUUID('session_id')),
+  body('student_id').notEmpty().custom(validateUUID('student_id')),
   body('status')
     .optional()
     .isIn(['present', 'absent', 'late', 'leave', 'manual_override'])
@@ -36,12 +37,12 @@ export const markAttendanceValidators = [
 ];
 
 export const scanAttendanceValidators = [
-  body('session_id').notEmpty().isUUID().withMessage('Valid session ID is required'),
+  body('session_id').notEmpty().custom(validateUUID('session_id')),
   body('embedding').notEmpty().withMessage('Face embedding is required'),
 ];
 
 export const updateAttendanceValidators = [
-  param('id').isUUID().withMessage('Invalid attendance record ID'),
+  param('id').custom(validateUUID('id')),
   body('status')
     .isIn(['present', 'absent', 'late', 'leave', 'manual_override'])
     .withMessage('Invalid status'),

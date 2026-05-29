@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { body, param } from 'express-validator';
 import { AuthRequest } from '../types';
+import { validateUUID } from '../utils/uuid.validator';
 import { faceService } from '../services/face.service';
 import { storageService } from '../services/storage.service';
 import { validateEmbedding, computeImageEmbedding } from '../utils/face.utils';
@@ -44,8 +45,7 @@ export const registerFaceValidators = [
 export const verifyFaceValidators = [
   body('userId')
     .optional()
-    .isUUID()
-    .withMessage('Invalid user ID'),
+    .custom(validateUUID('userId')),
   body('embedding')
     .notEmpty()
     .withMessage('Face embedding is required'),

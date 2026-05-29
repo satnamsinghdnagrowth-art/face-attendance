@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { body, param } from 'express-validator';
 import { AuthRequest, Class, Subject } from '../types';
+import { validateUUID } from '../utils/uuid.validator';
 import { query } from '../config/database';
 import {
   successResponse,
@@ -23,11 +24,11 @@ export const createClassValidators = [
 export const createSubjectValidators = [
   body('name').trim().notEmpty().isLength({ min: 2, max: 255 }).withMessage('Subject name required'),
   body('code').trim().notEmpty().isLength({ min: 1, max: 50 }).withMessage('Subject code required'),
-  body('teacherId').optional().isUUID().withMessage('Invalid teacher ID'),
+  body('teacherId').optional().custom(validateUUID('teacherId')),
 ];
 
 export const enrollStudentValidators = [
-  body('studentId').notEmpty().isUUID().withMessage('Valid student ID is required'),
+  body('studentId').notEmpty().custom(validateUUID('studentId')),
 ];
 
 // ─── Class Controllers ────────────────────────────────────────────────────────
