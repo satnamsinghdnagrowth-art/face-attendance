@@ -18,8 +18,20 @@ export const entryVerifyValidators = [
   body('student_id')
     .notEmpty().withMessage('student_id is required — select a student from the list before scanning')
     .isUUID().withMessage('student_id must be a valid UUID'),
+  // embedding is optional: the server generates it from face_image via computeImageEmbedding.
+  // A client-supplied value is used only as a fallback when server-side extraction fails.
   body('embedding')
-    .notEmpty().withMessage('Face embedding is required'),
+    .optional({ nullable: true, checkFalsy: true })
+    .custom((value: unknown) => {
+      if (!value) return true;
+      try {
+        const arr = typeof value === 'string' ? JSON.parse(value) : value;
+        if (!Array.isArray(arr)) throw new Error();
+        return true;
+      } catch {
+        throw new Error('embedding must be a JSON array of numbers');
+      }
+    }),
   body('scan_type')
     .optional()
     .isIn(['entry', 're_verify', 'manual'])
@@ -34,25 +46,42 @@ export const reVerifyValidators = [
     .notEmpty().withMessage('student_id is required')
     .isUUID().withMessage('student_id must be a valid UUID'),
   body('embedding')
-    .notEmpty().withMessage('Face embedding is required'),
+    .optional({ nullable: true, checkFalsy: true })
+    .custom((value: unknown) => {
+      if (!value) return true;
+      try {
+        const arr = typeof value === 'string' ? JSON.parse(value) : value;
+        if (!Array.isArray(arr)) throw new Error();
+        return true;
+      } catch {
+        throw new Error('embedding must be a JSON array of numbers');
+      }
+    }),
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function resolveEmbedding(
   file: Express.Multer.File | undefined,
-  rawEmbedding: string | number[]
+  rawEmbedding?: string | number[]
 ): Promise<number[]> {
+  // Always prefer server-side extraction — more reliable than any client-provided value.
   if (file) {
     try {
       return await computeImageEmbedding(file.buffer || file.path);
     } catch (imgErr) {
-      logger.warn('Server-side embedding failed, falling back to client embedding', { error: imgErr });
+      logger.warn('Server-side embedding failed — falling back to client embedding', { error: imgErr });
     }
   }
-  return typeof rawEmbedding === 'string'
-    ? (JSON.parse(rawEmbedding) as number[])
-    : rawEmbedding;
+  // Client-provided fallback (may be absent when client omits the field).
+  if (!rawEmbedding) return [];
+  try {
+    return typeof rawEmbedding === 'string'
+      ? (JSON.parse(rawEmbedding) as number[])
+      : rawEmbedding;
+  } catch {
+    return [];
+  }
 }
 
 async function resolveExamAndHall(

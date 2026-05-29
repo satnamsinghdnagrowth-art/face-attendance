@@ -218,7 +218,7 @@ describe('VerificationService.verifyCandidate', () => {
     expect(result.verdict).toBe('no_match');
     expect(result.confidence_score).toBe(0);
     expect(result.alert_raised).toBe(false);
-    expect(result.message).toContain('No face embeddings');
+    expect(result.message).toMatch(/no face/i);
   });
 
   // ── proxy_suspect ─────────────────────────────────────────────────────────

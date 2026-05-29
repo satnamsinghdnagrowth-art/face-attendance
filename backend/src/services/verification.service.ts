@@ -99,6 +99,20 @@ export class VerificationService {
     const faceThreshold = examResult.rows[0]?.face_threshold ?? 0.85;
     const flagThreshold = examResult.rows[0]?.flag_threshold ?? 0.70;
 
+    // Guard: no usable face embedding was extracted from the image and none was supplied.
+    if (!params.face_embedding || params.face_embedding.length === 0) {
+      const eventId = await this.insertEvent(params, null, 0, 'no_match');
+      await this.updateSessionCounters(params.exam_session_id, 'rejected');
+      return {
+        event_id: eventId,
+        verdict: 'no_match',
+        confidence_score: 0,
+        expected_student: expectedStudent,
+        alert_raised: false,
+        message: 'Face could not be extracted from the image — please retake the photo in good lighting',
+      };
+    }
+
     // Fetch expected student's embeddings
     const embeddings = await faceService.getUserEmbeddings(params.student_id);
 
@@ -112,7 +126,7 @@ export class VerificationService {
         confidence_score: 0,
         expected_student: expectedStudent,
         alert_raised: false,
-        message: 'No face embeddings found for this student',
+        message: 'No face registered for this student — contact the administrator',
       };
     }
 

@@ -17,73 +17,118 @@ const AUTH_ERROR_PATTERNS = [
 
 class SocketService {
   private socket: Socket | null = null;
+  private currentToken: string | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
-  private isHandlingAuthError = false;
+  // Separate counter for auth-error recovery attempts — not reset on reconnect,
+  // only on successful connection, so we can't loop indefinitely.
+  private authRetryCount = 0;
+  private maxAuthRetries = 2;
+  private authRetryScheduled = false;
+
+  private teardown(): void {
+    this.socket?.removeAllListeners();
+    this.socket?.disconnect();
+    this.socket = null;
+  }
 
   connect(token: string): void {
     if (this.socket?.connected) {
       return;
     }
 
-    // Clean up any stale socket before creating a new one
-    if (this.socket) {
-      this.socket.removeAllListeners();
-      this.socket.disconnect();
-      this.socket = null;
-    }
+    this.teardown();
+    this.currentToken = token;
 
     this.socket = io(SOCKET_URL, {
       auth: { token },
       transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: this.maxReconnectAttempts,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
+      // Disable socket.io's built-in reconnection — we manage auth-aware reconnection ourselves.
+      reconnection: false,
       timeout: 20000,
     });
 
     this.socket.on('connect', () => {
       console.log('[Socket] Connected:', this.socket?.id);
       this.reconnectAttempts = 0;
-      this.isHandlingAuthError = false;
+      this.authRetryCount = 0;
+      this.authRetryScheduled = false;
     });
 
     this.socket.on('disconnect', (reason) => {
       console.log('[Socket] Disconnected:', reason);
+      // Reconnect for non-auth disconnects (server restart, network blip, etc.)
+      if (reason === 'io server disconnect' || reason === 'transport close' || reason === 'transport error') {
+        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+          this.reconnectAttempts++;
+          const delay = Math.min(1000 * this.reconnectAttempts, 5000);
+          setTimeout(() => {
+            if (this.currentToken) this.connect(this.currentToken);
+          }, delay);
+        }
+      }
     });
 
     this.socket.on('connect_error', async (error) => {
       console.warn('[Socket] Connection error:', error.message);
-      this.reconnectAttempts++;
 
-      if (this.isHandlingAuthError || this.reconnectAttempts > this.maxReconnectAttempts) {
-        return;
-      }
+      // Already scheduled a recovery — don't pile on.
+      if (this.authRetryScheduled) return;
 
       const msgLower = error.message.toLowerCase();
       const isAuthError = AUTH_ERROR_PATTERNS.some((p) => msgLower.includes(p));
 
-      if (isAuthError) {
-        this.isHandlingAuthError = true;
-        try {
-          const freshToken = await SecureStore.getItemAsync('access_token');
-          if (freshToken) {
-            console.log('[Socket] Auth error detected — reconnecting with latest token');
-            this.socket?.removeAllListeners();
-            this.socket?.disconnect();
-            this.socket = null;
-            this.reconnectAttempts = 0;
-            setTimeout(() => {
-              this.isHandlingAuthError = false;
-              this.connect(freshToken);
-            }, 800);
-          } else {
-            this.isHandlingAuthError = false;
-          }
-        } catch {
-          this.isHandlingAuthError = false;
+      if (!isAuthError) return;
+
+      // Hard ceiling: if we've already tried maxAuthRetries times with a fresh token
+      // and still failing, stop looping. updateToken() will re-enable recovery when
+      // the Axios interceptor provides a genuinely new token.
+      if (this.authRetryCount >= this.maxAuthRetries) {
+        console.warn('[Socket] Auth recovery limit reached — waiting for token refresh via REST');
+        return;
+      }
+
+      try {
+        const freshToken = await SecureStore.getItemAsync('access_token');
+
+        if (!freshToken) {
+          // No token — user is logged out, nothing to do.
+          return;
         }
+
+        if (freshToken !== this.currentToken) {
+          // A newer token is already in store (Axios refreshed it) — reconnect now.
+          console.log('[Socket] Newer token found — reconnecting immediately');
+          this.authRetryCount++;
+          this.authRetryScheduled = true;
+          this.teardown();
+          this.reconnectAttempts = 0;
+          setTimeout(() => {
+            this.authRetryScheduled = false;
+            this.connect(freshToken);
+          }, 300);
+        } else {
+          // Same expired token — wait once for Axios to refresh it, then retry.
+          // If it's still the same after the wait, give up and rely on updateToken().
+          this.authRetryCount++;
+          this.authRetryScheduled = true;
+          const delay = 3000 * this.authRetryCount;
+          console.log(`[Socket] Same token still failing — waiting ${delay}ms for REST refresh`);
+          setTimeout(async () => {
+            this.authRetryScheduled = false;
+            const latestToken = await SecureStore.getItemAsync('access_token');
+            if (latestToken && latestToken !== this.currentToken) {
+              console.log('[Socket] Token refreshed during wait — reconnecting');
+              this.teardown();
+              this.reconnectAttempts = 0;
+              this.connect(latestToken);
+            } else {
+              console.log('[Socket] Token unchanged after wait — standing by for REST refresh');
+            }
+          }, delay);
+        }
+      } catch {
+        this.authRetryScheduled = false;
       }
     });
 
@@ -93,30 +138,27 @@ class SocketService {
   }
 
   /**
-   * Called by the Axios token-refresh interceptor after a successful token refresh.
-   * If the socket is disconnected/auth-failed, reconnects with the new token.
+   * Called by the Axios interceptor after a successful token refresh.
+   * Reconnects the socket with the new token regardless of current state.
    */
   updateToken(newToken: string): void {
-    if (this.socket?.connected) {
+    if (this.socket?.connected && newToken === this.currentToken) {
       return;
     }
-    console.log('[Socket] Updating token after REST refresh — reconnecting');
+    console.log('[Socket] Token refreshed via REST — reconnecting socket');
+    this.authRetryCount = 0;
+    this.authRetryScheduled = false;
     this.reconnectAttempts = 0;
-    this.isHandlingAuthError = false;
-    if (this.socket) {
-      this.socket.removeAllListeners();
-      this.socket.disconnect();
-      this.socket = null;
-    }
+    this.teardown();
     this.connect(newToken);
   }
 
   disconnect(): void {
-    if (this.socket) {
-      this.socket.removeAllListeners();
-      this.socket.disconnect();
-      this.socket = null;
-    }
+    this.currentToken = null;
+    this.authRetryCount = 0;
+    this.authRetryScheduled = false;
+    this.reconnectAttempts = 0;
+    this.teardown();
   }
 
   joinClassRoom(classId: string): void {

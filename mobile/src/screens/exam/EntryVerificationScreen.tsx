@@ -31,10 +31,12 @@ type RouteParams = {
   rollNumber?: string;
 };
 
-type VerdictType = 'verified' | 'flagged' | 'rejected' | 'proxy_suspect' | null;
+type VerdictType = VerdictKey | null;
+
+type VerdictKey = 'verified' | 'flagged' | 'rejected' | 'proxy_suspect' | 'no_match';
 
 const verdictConfig: Record<
-  Exclude<VerdictType, null>,
+  VerdictKey,
   { bg: string; icon: keyof typeof Ionicons.glyphMap; title: string; subtitle: string }
 > = {
   verified: {
@@ -53,13 +55,19 @@ const verdictConfig: Record<
     bg: 'rgba(220,38,38,0.88)',
     icon: 'close-circle',
     title: 'REJECTED',
-    subtitle: 'Entry Denied',
+    subtitle: 'Face Did Not Match',
   },
   proxy_suspect: {
     bg: 'rgba(220,38,38,0.88)',
     icon: 'person-remove',
     title: 'PROXY SUSPECTED',
     subtitle: 'Alert Escalated to Examiner',
+  },
+  no_match: {
+    bg: 'rgba(100,116,139,0.88)',
+    icon: 'help-circle',
+    title: 'NO FACE DATA',
+    subtitle: 'Student Not Registered',
   },
 };
 
@@ -164,10 +172,10 @@ const EntryVerificationScreen: React.FC = () => {
       formData.append('exam_session_id', sessionId);
       formData.append('student_id', studentId);
       formData.append('scan_type', 'entry');
-      // Send a zero-vector embedding; the backend prefers server-side embedding from the image
-      formData.append('embedding', JSON.stringify(new Array(128).fill(0)));
+      // No client-side embedding — the server extracts it from face_image via sharp.
+      // Sending a zero vector would corrupt the fallback path when server extraction fails.
 
-      if (idCardMode && idCardUri) {
+      if (idCardUri) {
         formData.append('id_card_image', {
           uri: idCardUri,
           type: 'image/jpeg',
@@ -176,19 +184,39 @@ const EntryVerificationScreen: React.FC = () => {
       }
 
       const res = await examApi.verifyEntry(formData);
-      const result: VerificationResult = res.data?.data || res.data;
-      showVerdictOverlay(result);
+      const rawResult = res.data?.data ?? res.data;
+
+      // Normalise verdict: treat any unknown string as 'rejected' so the overlay always renders
+      const verdict = rawResult?.verdict as VerdictKey | undefined;
+      const normalisedResult: VerificationResult = {
+        ...rawResult,
+        verdict: verdict && verdictConfig[verdict] ? verdict : 'rejected',
+      };
+      showVerdictOverlay(normalisedResult);
     } catch (e: unknown) {
-      // Extract the actual error message from axios 400/500 responses
-      const axiosErr = e as { response?: { data?: { message?: string; errors?: Array<{ message: string }> } }; message?: string };
+      const axiosErr = e as {
+        response?: {
+          status?: number;
+          data?: { message?: string; errors?: Array<{ field?: string; message: string }> };
+        };
+        message?: string;
+      };
+
+      const status = axiosErr?.response?.status;
       const serverMsg =
         axiosErr?.response?.data?.message ||
         axiosErr?.response?.data?.errors?.[0]?.message ||
         axiosErr?.message;
 
-      if (serverMsg?.includes('exam_session_id') || serverMsg?.includes('session')) {
+      console.warn('[Scan] Failed', { status, serverMsg });
+
+      if (status === 401) {
+        Alert.alert('Session Expired', 'Your login session has expired. Please log in again.');
+      } else if (status === 403) {
+        Alert.alert('Not Authorised', 'You are not authorised to scan this student.');
+      } else if (status === 404 || serverMsg?.toLowerCase().includes('session')) {
         Alert.alert('Session Error', 'No active session found. Please start a hall session first.');
-      } else if (serverMsg?.includes('student_id') || serverMsg?.includes('student')) {
+      } else if (serverMsg?.toLowerCase().includes('student')) {
         Alert.alert('Student Error', 'Student information is missing. Please select a student from the list.');
       } else {
         Alert.alert('Scan Failed', serverMsg || 'Unable to verify. Please try again.');
@@ -227,8 +255,8 @@ const EntryVerificationScreen: React.FC = () => {
     });
   }, []);
 
-  const currentVerdict = verdictResult
-    ? ((verdictResult.verdict) as VerdictType)
+  const currentVerdict: VerdictType = verdictResult?.verdict
+    ? (verdictResult.verdict as VerdictKey)
     : null;
   const verdictCfg = currentVerdict ? verdictConfig[currentVerdict] : null;
 

@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { JWTPayload } from '../types';
 import env from '../config/env';
 import logger from '../utils/logger';
-import { redisClient } from '../config/redis';
+import { safeGet } from '../config/redis';
 
 interface AuthenticatedSocket extends Socket {
   user?: JWTPayload;
@@ -15,7 +15,7 @@ const authenticateSocket = async (
 ): Promise<void> => {
   try {
     const token =
-      socket.handshake.auth['token'] as string | undefined ||
+      (socket.handshake.auth['token'] as string | undefined) ||
       socket.handshake.headers['authorization']?.replace('Bearer ', '');
 
     if (!token) {
@@ -23,7 +23,10 @@ const authenticateSocket = async (
       return;
     }
 
-    const isBlacklisted = await redisClient.get(`blacklist:${token}`);
+    // safeGet never throws — returns null when Redis is unavailable.
+    // A Redis outage must never block socket authentication; the blacklist
+    // check is skipped gracefully, matching the behaviour of the REST auth middleware.
+    const isBlacklisted = await safeGet(`blacklist:${token}`);
     if (isBlacklisted) {
       next(new Error('Token has been revoked'));
       return;
@@ -38,6 +41,10 @@ const authenticateSocket = async (
     } else if (error instanceof jwt.JsonWebTokenError) {
       next(new Error('Invalid token'));
     } else {
+      // This branch now only fires for unexpected errors, not Redis failures.
+      logger.error('[Socket] Unexpected auth error', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       next(new Error('Authentication failed'));
     }
   }
