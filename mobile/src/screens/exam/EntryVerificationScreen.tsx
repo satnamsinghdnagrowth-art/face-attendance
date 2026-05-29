@@ -172,8 +172,11 @@ const EntryVerificationScreen: React.FC = () => {
       formData.append('exam_session_id', sessionId);
       formData.append('student_id', studentId);
       formData.append('scan_type', 'entry');
-      // No client-side embedding — the server extracts it from face_image via sharp.
-      // Sending a zero vector would corrupt the fallback path when server extraction fails.
+      // Server generates the real embedding from face_image (sharp / computeImageEmbedding).
+      // We send an empty-array sentinel so the current deployed validator (notEmpty) passes.
+      // After the backend is redeployed with the optional-embedding validator this field
+      // can be dropped entirely; the value is ignored when server extraction succeeds.
+      formData.append('embedding', '[]');
 
       if (idCardUri) {
         formData.append('id_card_image', {
@@ -203,12 +206,13 @@ const EntryVerificationScreen: React.FC = () => {
       };
 
       const status = axiosErr?.response?.status;
+      // Prefer the specific field-level validation message over the generic wrapper.
       const serverMsg =
-        axiosErr?.response?.data?.message ||
         axiosErr?.response?.data?.errors?.[0]?.message ||
+        axiosErr?.response?.data?.message ||
         axiosErr?.message;
 
-      console.warn('[Scan] Failed', { status, serverMsg });
+      console.warn('[Scan] Failed', { status, serverMsg, errors: axiosErr?.response?.data?.errors });
 
       if (status === 401) {
         Alert.alert('Session Expired', 'Your login session has expired. Please log in again.');
